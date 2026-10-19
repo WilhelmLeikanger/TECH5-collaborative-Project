@@ -790,16 +790,25 @@ def compare_solutions() -> Any:
 
     sol_a = None
     sol_b = None
+    comparison = None
     if sol1:
         sol_a = run_repo.get_solution(sol1)
     if sol2:
         sol_b = run_repo.get_solution(sol2)
+
+    if sol_a and sol_b:
+        engine = solvers.AssignmentEngine()
+        try:
+            comparison = engine.compare_solutions(sol1, sol2)
+        except NotImplementedError:
+            comparison = mocks.MockAssignmentEngine().compare_solutions(sol1, sol2)
 
     return flask.render_template(
         "compare.html",
         all_solutions=all_solutions,
         sol_a=sol_a,
         sol_b=sol_b,
+        comparison=comparison,
     )
 
 
