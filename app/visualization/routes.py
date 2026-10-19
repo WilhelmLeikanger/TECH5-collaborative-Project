@@ -388,16 +388,124 @@ def new_project_form() -> str:
     )
 
 
+def _parse_project_form(
+    project_id: str,
+) -> tuple[models.Project | None, str | None]:
+    """Reads the project form and builds a Project, or returns an error.
+
+    Args:
+        project_id: Identifier the project should be saved under.
+
+    Returns:
+        A tuple of (project, error_message). Exactly one of them is None.
+    """
+    form = flask.request.form
+    title = form.get("title", "").strip()
+    description = form.get("description", "").strip()
+
+    if not title:
+        return None, "Project title cannot be empty."
+
+    # Capacities: must be whole numbers, min >= 0, max >= 1, min <= max.
+    try:
+        min_capacity = int(form.get("min_capacity", "0") or 0)
+        max_capacity = int(form.get("max_capacity", "1") or 1)
+    except ValueError:
+        return None, "Capacities must be whole numbers."
+
+    if min_capacity < 0:
+        return None, "Minimum capacity cannot be negative."
+    if max_capacity < 1:
+        return None, "Maximum capacity must be at least 1."
+    if min_capacity > max_capacity:
+        return None, (
+            f"Minimum capacity ({min_capacity}) cannot exceed "
+            f"maximum capacity ({max_capacity})."
+        )
+
+    # Skill requirements: one row per catalogued skill, named
+    # req_level_<skill_id> (0 to 5) and req_mand_<skill_id> (checkbox).
+    valid_skills = {s.id for s in repositories.SkillRepository().list_all()}
+    requirements: list[models.ProjectRequirement] = []
+    for key, val in form.items():
+        if not key.startswith("req_level_"):
+            continue
+        skill_id = key.replace("req_level_", "")
+        if skill_id not in valid_skills:
+            continue
+        try:
+            level = int(val or 0)
+        except ValueError:
+            return None, f"Invalid level for skill '{skill_id}'."
+        if level < 0 or level > 5:
+            return None, (
+                f"Level for skill '{skill_id}' must be between 0 and 5."
+            )
+        if level == 0:
+            continue  # 0 means "not required"
+        is_mandatory = form.get(f"req_mand_{skill_id}") == "1"
+        requirements.append(
+            models.ProjectRequirement(
+                project_id=project_id,
+                skill_id=skill_id,
+                minimum_level=level,
+                is_mandatory=is_mandatory,
+            )
+        )
+
+    project = models.Project(
+        id=project_id,
+        title=title,
+        description=description,
+        min_capacity=min_capacity,
+        max_capacity=max_capacity,
+        requirements=requirements,
+    )
+    return project, None
+
+
 @web_bp.post("/projects/new")
 def create_project() -> flask.Response:
-    """Processes creation of a project.
+    """Processes creation of a project."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project creation and requirement parsing"
+    p_id = flask.request.form.get("id", "").strip()
+    if not p_id:
+        flask.flash("Project ID cannot be empty.", "warning")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    if repositories.ProjectRepository().get_by_id(p_id):
+        flask.flash(f"Project ID '{p_id}' already exists.", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    project, error = _parse_project_form(p_id)
+    if error:
+        flask.flash(error, "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    try:
+        repositories.ProjectRepository().save(project)
+    except sqlite3.IntegrityError as exc:
+        flask.flash(
+            f"Database constraint error while saving project: {exc}",
+            "danger",
+        )
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    flask.flash(
+        f"Project '{project.title}' ({p_id}) created successfully.", "success"
     )
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 @web_bp.get("/projects/<project_id>/edit")
