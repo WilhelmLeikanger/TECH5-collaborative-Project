@@ -374,10 +374,13 @@ def list_projects() -> str:
     """Displays project catalog and capacity definitions."""
     projects = repositories.ProjectRepository().list_all()
     skills = repositories.SkillRepository().list_all()
+    skill_names = {sk.id: sk.name for sk in skills}
     return flask.render_template(
-        "projects.html", projects=projects, skills=skills
+        "projects.html",
+        projects=projects,
+        skills=skills,
+        skill_names=skill_names,
     )
-
 
 @web_bp.get("/projects/new")
 def new_project_form() -> str:

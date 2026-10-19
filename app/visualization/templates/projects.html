@@ -19,13 +19,6 @@
   </div>
 
   <div class="card-body">
-    <!-- TODO (Team A): Implement Project Catalog Table and Capacity Displays -->
-    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
-      <strong>Team A Starter Carcass:</strong>
-      Implement the project table below to display all registered semester projects,
-      their min/max capacity quotas, skill requirements (with mandatory badges), and edit/delete actions.
-    </div>
-
     <div class="table-responsive">
       <table class="data-table">
         <thead>
@@ -40,7 +33,6 @@
         <tbody>
           {% if projects %}
             {% for p in projects %}
-              <!-- TODO (Team A): Render each project row with capacity and requirement badges -->
               <tr>
                 <td><strong>{{ p.id }}</strong></td>
                 <td>
@@ -55,16 +47,28 @@
                   </span>
                 </td>
                 <td>
-                  <!-- TODO (Team A): Render skill requirement badges (mandatory vs optional) -->
                   {% if p.requirements %}
-                    <span class="badge badge-primary">{{ p.requirements|length }} requirements</span>
+                    <div style="display: flex; flex-wrap: wrap; gap: 0.3rem;">
+                      {% for req in p.requirements %}
+                        <span class="badge {% if req.is_mandatory %}badge-danger{% else %}badge-primary{% endif %}"
+                              title="{% if req.is_mandatory %}Mandatory (hard constraint){% else %}Desired (counts toward skill fit){% endif %}">
+                          {{ skill_names.get(req.skill_id, req.skill_id) }} &ge; {{ req.minimum_level }}{% if req.is_mandatory %} *{% endif %}
+                        </span>
+                      {% endfor %}
+                    </div>
                   {% else %}
                     <span style="color: var(--text-muted); font-style: italic;">None</span>
                   {% endif %}
                 </td>
                 {% if can_edit %}
                   <td>
-                    <a href="{{ url_for('visualization_web.edit_project_form', project_id=p.id) }}" class="btn btn-sm btn-secondary">Edit</a>
+                    <div style="display: flex; gap: 0.5rem;">
+                      <a href="{{ url_for('visualization_web.edit_project_form', project_id=p.id) }}" class="btn btn-sm btn-secondary">Edit</a>
+                      <form action="{{ url_for('visualization_web.delete_project', project_id=p.id) }}" method="POST"
+                            onsubmit="return confirm('Delete project {{ p.id }}? Student preferences and fixed assignments pointing to it will also be removed.');">
+                        <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+                      </form>
+                    </div>
                   </td>
                 {% endif %}
               </tr>
@@ -79,6 +83,12 @@
         </tbody>
       </table>
     </div>
+    {% if projects %}
+      <p style="color: var(--text-muted); font-size: 0.82rem; margin-top: 0.75rem;">
+        <span class="badge badge-danger">Skill &ge; level *</span> = mandatory (hard constraint for the engine) &nbsp;
+        <span class="badge badge-primary">Skill &ge; level</span> = desired (contributes to skill fit)
+      </p>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
