@@ -776,18 +776,30 @@ def clear_solutions() -> flask.Response:
 @web_bp.get("/compare")
 def compare_solutions() -> Any:
     """
-    Renders side-by-side comparative analysis of two solutions.   
+    Renders side-by-side comparative analysis of two solutions.
     """
-    runs = repositories.RunRepository().list_runs()
-    all_solutions = []
+    run_repo = repositories.RunRepository()
 
-    for run in runs:
+    all_solutions = []
+    for run in run_repo.list_runs():
         for solution in run.solutions:
             all_solutions.append(solution)
+
+    sol1 = flask.request.args.get("sol1")
+    sol2 = flask.request.args.get("sol2")
+
+    sol_a = None
+    sol_b = None
+    if sol1:
+        sol_a = run_repo.get_solution(sol1)
+    if sol2:
+        sol_b = run_repo.get_solution(sol2)
 
     return flask.render_template(
         "compare.html",
         all_solutions=all_solutions,
+        sol_a=sol_a,
+        sol_b=sol_b,
     )
 
 
