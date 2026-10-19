@@ -9,12 +9,6 @@
       <h2 class="card-title">Competence & Skill Catalog</h2>
     </div>
     <div class="card-body">
-      <!-- TODO (Team A): Implement Competence & Skill Catalog Display -->
-      <div class="alert alert-info" style="margin-bottom: 1rem;">
-        <strong>Team A Starter Carcass:</strong>
-        Render the catalogued skills with their identifier, title, and description.
-      </div>
-
       {% if skills %}
         <div class="table-responsive">
           <table class="data-table">
@@ -58,7 +52,6 @@
       <h2 class="card-title">+ Add New Skill</h2>
     </div>
     <div class="card-body">
-      <!-- TODO (Team A): Implement Skill Creation Form -->
       {% if can_edit %}
         <form action="{{ url_for('visualization_web.create_skill') }}" method="POST">
           <div class="form-group">

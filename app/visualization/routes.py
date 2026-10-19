@@ -452,14 +452,33 @@ def list_skills() -> str:
 
 @web_bp.post("/skills/new")
 def create_skill() -> flask.Response:
-    """Creates a new skill record.
+    """Creates a new skill record."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement skill creation"
-    )
+    skill_id = flask.request.form.get("id", "").strip()
+    name = flask.request.form.get("name", "").strip()
+    description = flask.request.form.get("description", "").strip()
+
+    if not skill_id or not name:
+        flask.flash("Skill code and name are required.", "warning")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
+
+    repo = repositories.SkillRepository()
+    if repo.get_by_id(skill_id) is not None:
+        flask.flash(f"Skill '{skill_id}' already exists.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
+
+    skill = models.Skill(id=skill_id, name=name, description=description)
+    try:
+        repo.save(skill)
+    except sqlite3.Error as exc:
+        flask.flash(f"Database error while saving skill: {exc}", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
+
+    flask.flash(f"Skill '{name}' ({skill_id}) created successfully.", "success")
+    return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
 
 @web_bp.post("/skills/<skill_id>/delete")
