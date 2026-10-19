@@ -524,27 +524,77 @@ def edit_project_form(project_id: str) -> Any:
 
 @web_bp.post("/projects/<project_id>/edit")
 def update_project(project_id: str) -> flask.Response:
-    """Updates an existing project entity.
+    """Updates an existing project entity."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project update and requirement parsing"
+    repo = repositories.ProjectRepository()
+    if not repo.get_by_id(project_id):
+        flask.flash(f"Project '{project_id}' not found.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
+
+    edit_url = flask.url_for(
+        "visualization_web.edit_project_form", project_id=project_id
     )
+
+    project, error = _parse_project_form(project_id)
+    if error:
+        flask.flash(error, "danger")
+        return flask.redirect(edit_url)
+
+    try:
+        repo.save(project)
+    except sqlite3.IntegrityError as exc:
+        flask.flash(
+            f"Database constraint error while updating project: {exc}",
+            "danger",
+        )
+        return flask.redirect(edit_url)
+
+    flask.flash(f"Project '{project_id}' updated.", "success")
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 @web_bp.post("/projects/<project_id>/delete")
 def delete_project(project_id: str) -> flask.Response:
-    """Deletes a project.
+    """Deletes a project."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project deletion"
-    )
+    # Deleting a project cascades in the database: student preferences and
+    # fixed assignments pointing at it disappear too. Tell the user so the
+    # side effect is visible rather than silent.
+    affected_students = [
+        s.id
+        for s in repositories.StudentRepository().list_all()
+        if any(pref.project_id == project_id for pref in s.preferences)
+    ]
+    affected_locks = [
+        fa.student_id
+        for fa in repositories.FixedAssignmentRepository().list_all()
+        if fa.project_id == project_id
+    ]
 
+    deleted = repositories.ProjectRepository().delete(project_id)
+    if not deleted:
+        flask.flash(f"Project '{project_id}' not found.", "warning")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
+
+    message = f"Project '{project_id}' removed."
+    if affected_students:
+        message += (
+            f" It was removed from the preferences of "
+            f"{len(affected_students)} student(s)."
+        )
+    if affected_locks:
+        message += (
+            f" {len(affected_locks)} fixed assignment(s) to it were "
+            f"also removed."
+        )
+    flask.flash(message, "warning" if (affected_students or affected_locks) else "info")
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 # -----------------------------------------------------------------------------
 # Skills CRUD & Preferences Editor
