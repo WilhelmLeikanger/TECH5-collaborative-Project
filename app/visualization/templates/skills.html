@@ -28,8 +28,7 @@
                   <td>{{ sk.description }}</td>
                   {% if can_edit %}
                     <td>
-                      <!-- TODO (Team A): Delete skill action -->
-                      <form action="{{ url_for('visualization_web.delete_skill', skill_id=sk.id) }}" method="POST" onsubmit="return confirm('Delete skill {{ sk.id }}?');">
+                      <form action="{{ url_for('visualization_web.delete_skill', skill_id=sk.id) }}" method="POST" onsubmit="return confirm('Delete skill {{ sk.id }}? It will also be removed from all students and project requirements.');">
                         <button type="submit" class="btn btn-sm btn-danger">Delete</button>
                       </form>
                     </td>

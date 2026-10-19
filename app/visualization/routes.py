@@ -485,12 +485,18 @@ def create_skill() -> flask.Response:
 def delete_skill(skill_id: str) -> flask.Response:
     """Deletes a skill record.
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
+    Student proficiencies and project requirements that reference the skill
+    are removed by the database (ON DELETE CASCADE).
     """
-    raise NotImplementedError(
-        "TODO (Team A): Implement skill deletion"
-    )
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_skills"))
+
+    if repositories.SkillRepository().delete(skill_id):
+        flask.flash(f"Skill '{skill_id}' removed.", "info")
+    else:
+        flask.flash(f"Skill '{skill_id}' not found.", "warning")
+    return flask.redirect(flask.url_for("visualization_web.list_skills"))
 
 
 @web_bp.get("/preferences")
