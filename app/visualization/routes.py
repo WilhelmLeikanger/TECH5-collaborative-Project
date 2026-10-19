@@ -775,13 +775,19 @@ def clear_solutions() -> flask.Response:
 
 @web_bp.get("/compare")
 def compare_solutions() -> Any:
-    """Renders side-by-side comparative analysis of two solutions.
-
-    Raises:
-        NotImplementedError: To be implemented by Team A.
     """
-    raise NotImplementedError(
-        "TODO (Team A): Implement side-by-side solution comparison controller"
+    Renders side-by-side comparative analysis of two solutions.   
+    """
+    runs = repositories.RunRepository().list_runs()
+    all_solutions = []
+
+    for run in runs:
+        for solution in run.solutions:
+            all_solutions.append(solution)
+
+    return flask.render_template(
+        "compare.html",
+        all_solutions=all_solutions,
     )
 
 
