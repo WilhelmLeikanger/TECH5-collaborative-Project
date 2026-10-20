@@ -793,15 +793,24 @@ def compare_solutions() -> Any:
     comparison = None
     if sol1:
         sol_a = run_repo.get_solution(sol1)
+        if sol_a is None:
+            flask.flash("Baseline solution (A) could not be found.", "warning")
     if sol2:
         sol_b = run_repo.get_solution(sol2)
+        if sol_b is None:
+            flask.flash("Comparison solution (B) could not be found.", "warning")
 
     if sol_a and sol_b:
-        engine = solvers.AssignmentEngine()
-        try:
-            comparison = engine.compare_solutions(sol1, sol2)
-        except NotImplementedError:
-            comparison = mocks.MockAssignmentEngine().compare_solutions(sol1, sol2)
+        if sol1 == sol2:
+            flask.flash("Please select two different solutions.", "warning")
+        else:
+            engine = solvers.AssignmentEngine()
+            try:
+                comparison = engine.compare_solutions(sol1, sol2)
+            except NotImplementedError:
+                comparison = mocks.MockAssignmentEngine().compare_solutions(sol1, sol2)
+            except KeyError:
+                flask.flash("Could not compare the selected solutions, one of them may have been removed. Please select again.", "danger")
 
     return flask.render_template(
         "compare.html",
