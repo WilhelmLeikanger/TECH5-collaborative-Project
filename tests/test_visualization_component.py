@@ -216,14 +216,15 @@ def test_projects_crud_workflow(tmp_path: pathlib.Path) -> None:
     )
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team A): Implement comparison controller & view",
-)
+
 def test_compare_solutions_view(tmp_path: pathlib.Path) -> None:
     """Verifies solution comparison controller (Team A implementation)."""
     db_file = tmp_path / "test_comp.db"
     app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
     client = app.test_client()
 
-    client.get("/compare?sol1=S1&sol2=S2")
+    res = client.get("/compare?sol1=S1&sol2=S2")
+
+    assert res.status_code == 200
+    assert b"Baseline solution (A) could not be found." in res.data
+    assert b"Comparison solution (B) could not be found." in res.data
