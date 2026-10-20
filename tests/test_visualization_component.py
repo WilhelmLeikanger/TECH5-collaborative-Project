@@ -172,25 +172,52 @@ def test_create_student_preference_validation(
     assert saved.preferences[0].project_id == "P1"
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team A): Implement skill CRUD",
-)
 def test_skills_crud_workflow(tmp_path: pathlib.Path) -> None:
-    """Verifies skill addition workflow (Team A implementation)."""
+    """Verifies skill creation, validation and deletion workflow."""
     db_file = tmp_path / "test_skill.db"
     app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
     client = app.test_client()
+    skill_data = {
+        "id": "py",
+        "name": "Python",
+        "description": "Python Programming",
+    }
 
-    client.post(
-        "/skills/new",
-        data={
-            "id": "py",
-            "name": "Python",
-            "description": "Python Programming",
-        },
-        follow_redirects=True,
+    # 1. Valid skill is created and shown in the catalog
+    res = client.post("/skills/new", data=skill_data, follow_redirects=True)
+    assert res.status_code == 200
+    assert b"created successfully" in res.data
+    saved = repositories.SkillRepository().get_by_id("py")
+    assert saved is not None
+    assert saved.name == "Python"
+
+    # 2. Duplicate identifier is rejected
+    res_dup = client.post(
+        "/skills/new", data=skill_data, follow_redirects=True
     )
+    assert b"already exists" in res_dup.data
+
+    # 3. Missing name is rejected and nothing is saved
+    res_empty = client.post(
+        "/skills/new", data={"id": "sql", "name": ""}, follow_redirects=True
+    )
+    assert b"required" in res_empty.data
+    assert repositories.SkillRepository().get_by_id("sql") is None
+
+    # 4. Student viewers cannot create skills
+    client.post("/set-role", data={"role": "STUDENT"})
+    client.post(
+        "/skills/new", data={"id": "r", "name": "R"}, follow_redirects=True
+    )
+    assert repositories.SkillRepository().get_by_id("r") is None
+    client.post("/set-role", data={"role": "ADMIN"})
+
+    # 5. Deleting removes the skill; deleting again reports not found
+    res_del = client.post("/skills/py/delete", follow_redirects=True)
+    assert b"removed" in res_del.data
+    assert repositories.SkillRepository().get_by_id("py") is None
+    res_missing = client.post("/skills/py/delete", follow_redirects=True)
+    assert b"not found" in res_missing.data
 
 
 @pytest.mark.xfail(
