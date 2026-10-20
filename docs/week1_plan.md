@@ -1,6 +1,6 @@
 # Team A Plan: Visualization and Recommendation
 
-**Team A members:** Wilhelm Leikanger, AB, Wassi
+**Team A members:** Wilhelm Leikanger, Alexander Bangsund, Henrik Wassiluk
 **Component:** `app/visualization/` (Flask/Jinja web interface)
 **Repository:** https://github.com/WilhelmLeikanger/TECH5-collaborative-Project
 (shared with Team B)
@@ -23,8 +23,8 @@ view mock solution comparisons.
 | Owner | Task | Files | Done when |
 |---|---|---|---|
 | Wilhelm | **Skills management**: `create_skill`, `delete_skill`; skill catalog table and create form. | `routes.py` (`create_skill`, `delete_skill`), `templates/skills.html` | `test_skills_crud_workflow` passes; a skill can be added and deleted in the browser |
-| AB | **Projects management**: `create_project`, `update_project`, `delete_project`, including parsing skill requirements (minimum level 1–5, mandatory or not) and capacity validation (min ≤ max). Project table and create/edit form. | `routes.py` (`create_project`, `update_project`, `delete_project`), `templates/projects.html`, `templates/project_form.html` | `test_projects_crud_workflow` passes; a project with requirements can be created, edited and deleted |
-| Wassi | **Solution comparison (mock)**: `compare_solutions` controller (reads `sol1` / `sol2`, calls `engine.compare_solutions`) and side-by-side view: changed students, Δ skill fit, Δ mean rank, Δ unranked, trade-off summary. | `routes.py` (`compare_solutions`), `templates/compare.html` | `test_compare_solutions_view` passes; two mock solutions can be compared in the browser |
+| Alexander | **Projects management**: `create_project`, `update_project`, `delete_project`, including parsing skill requirements (minimum level 1–5, mandatory or not) and capacity validation (min ≤ max). Project table and create/edit form. | `routes.py` (`create_project`, `update_project`, `delete_project`), `templates/projects.html`, `templates/project_form.html` | `test_projects_crud_workflow` passes; a project with requirements can be created, edited and deleted |
+| Henrik | **Solution comparison (mock)**: `compare_solutions` controller (reads `sol1` / `sol2`, calls `engine.compare_solutions`) and side-by-side view: changed students, Δ skill fit, Δ mean rank, Δ unranked, trade-off summary. | `routes.py` (`compare_solutions`), `templates/compare.html` | `test_compare_solutions_view` passes; two mock solutions can be compared in the browser |
 
 **Shared Week 1 tasks**
 
@@ -41,8 +41,8 @@ alternatives, and shows live comparisons without mock output.
 
 | Owner | Task |
 |---|---|
-| Wassi | Recommendations: make the recommendation view explain *what improves, what gets worse, who is affected, and which alternative we recommend and why*, separating calculated evidence from advice. |
-| AB | Fairness and results display: rank distribution, students outside their preferences, worst individual outcome, and the extra fairness indicator agreed with Team B. |
+| Henrik | Recommendations: make the recommendation view explain *what improves, what gets worse, who is affected, and which alternative we recommend and why*, separating calculated evidence from advice. |
+| Alexander | Fairness and results display: rank distribution, students outside their preferences, worst individual outcome, and the extra fairness indicator agreed with Team B. |
 | Wilhelm | Integration: switch from the mock to Team B's `AssignmentEngine`, run end-to-end tests together with Team B, fix contract mismatches. |
 | Wilhelm (all contribute) | **Week 2 progress report.** |
 
@@ -54,8 +54,8 @@ reruns, and infeasibility handling.
 
 | Owner | Task |
 |---|---|
-| AB | Edge cases in the UI: invalid capacities, unknown IDs, missing skills, conflicting fixed assignments — clear error messages, no crashes. Edge-case tests. |
-| Wassi | Reproducible demonstration (`docs/reproducible_demonstration.md`): trade-off between alternatives, recommendation, fixed assignment + rerun, infeasible case. |
+| Alexander | Edge cases in the UI: invalid capacities, unknown IDs, missing skills, conflicting fixed assignments — clear error messages, no crashes. Edge-case tests. |
+| Henrik | Reproducible demonstration (`docs/reproducible_demonstration.md`): trade-off between alternatives, recommendation, fixed assignment + rerun, infeasible case. |
 | Wilhelm | Component/class diagrams and design rationale for Team A; database model and representative SQL queries (together with Team B). |
 | All | Team reflection (`docs/team_reflection_and_rubric.md` — rewrite it to describe our real work): responsibilities, communication, Git, AI use, refactoring, integration, lessons. |
 
@@ -69,8 +69,8 @@ reruns, and infeasibility handling.
 | 4 | Component and class diagrams with design rationale | Wilhelm (Team A part) |
 | 5 | Database model and representative SQL queries | Wilhelm + Team B |
 | 6 | Analytical note | Team B (Team A reviews the recommendation criteria) |
-| 7 | Evidence of component, database, integration and edge-case testing | AB + Team B |
-| 8 | Reproducible demonstration | Wassi |
+| 7 | Evidence of component, database, integration and edge-case testing | Alexander + Team B |
+| 8 | Reproducible demonstration | Henrik |
 | 9 | Team reflection | All |
 
 ## 6. Way of working
