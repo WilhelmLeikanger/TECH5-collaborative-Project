@@ -4,6 +4,7 @@ Covers each run status (COMPLETED, INFEASIBLE, INVALID_INPUT), saving of
 every run, dominance flagging, and indicator values from the analytical note.
 """
 
+import dataclasses
 import pathlib
 
 import pytest
@@ -201,3 +202,78 @@ def test_compare_counts_unranked_as_worse() -> None:
     )
     assert comparison["changed_assignments"][0]["rank_delta"] == 3
     assert comparison["rank_worsened_count"] == 1
+
+
+def _standard_request(scenario: dict | None = None) -> contract.RunRequest:
+    scenario = scenario or demo_data.get_standard_scenario()
+    return contract.RunRequest(
+        students=scenario["students"],
+        projects=scenario["projects"],
+        skills=scenario["skills"],
+        fixed_assignments=scenario["fixed_assignments"],
+    )
+
+
+def test_tied_ranks_are_invalid_input_not_a_crash() -> None:
+    request = _standard_request()
+    first = request.students[0]
+    first.preferences[1] = models.Preference(
+        first.id, first.preferences[1].project_id, 1
+    )
+    run = _run(request)
+    assert run.status == "INVALID_INPUT"
+    assert any("tied preferences" in e for e in run.diagnostics["errors"])
+
+
+def test_same_project_ranked_twice_is_invalid_input() -> None:
+    request = _standard_request()
+    first = request.students[0]
+    first.preferences[1] = models.Preference(
+        first.id, first.preferences[0].project_id, 2
+    )
+    run = _run(request)
+    assert run.status == "INVALID_INPUT"
+    assert any("multiple preferences" in e for e in run.diagnostics["errors"])
+
+
+@pytest.mark.parametrize("level", [0, 6])
+def test_student_skill_level_outside_1_to_5_is_invalid(level: int) -> None:
+    request = _standard_request()
+    request.students[0].skills["python"] = level
+    run = _run(request)
+    assert run.status == "INVALID_INPUT"
+    assert any("levels must be 1 to 5" in e for e in run.diagnostics["errors"])
+
+
+def test_requirement_level_outside_1_to_5_is_invalid() -> None:
+    scenario = demo_data.get_standard_scenario()
+    project = scenario["projects"][0]
+    project.requirements[0] = dataclasses.replace(
+        project.requirements[0], minimum_level=9
+    )
+    run = _run(_standard_request(scenario))
+    assert run.status == "INVALID_INPUT"
+    assert any("levels must be 1 to 5" in e for e in run.diagnostics["errors"])
+
+
+def test_fewer_than_three_preferences_warns_but_solves() -> None:
+    request = _standard_request()
+    request.students[0].preferences = request.students[0].preferences[:2]
+    run = _run(request)
+    assert run.status == "COMPLETED"
+    assert any("at least 3" in w for w in run.diagnostics["warnings"])
+
+
+def test_bad_data_is_invalid_even_when_also_infeasible() -> None:
+    """Empty cohort: an input error, even though Σmin_cap > n also holds."""
+    run = _run(dataclasses.replace(_standard_request(), students=[]))
+    assert run.status == "INVALID_INPUT"
+    assert any("cannot be empty" in e for e in run.diagnostics["errors"])
+
+
+def test_fixed_over_capacity_stays_infeasible_with_reason() -> None:
+    """Valid data, unsolvable problem: 4 locks on a 3-seat project."""
+    run = _run(_standard_request(demo_data.get_conflicting_fixed_scenario()))
+    assert run.status == "INFEASIBLE"
+    assert any("exceed its maximum capacity" in r
+               for r in run.diagnostics["reasons"])

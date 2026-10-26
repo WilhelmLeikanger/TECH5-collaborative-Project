@@ -793,6 +793,24 @@ class AssignmentEngine(contract.AssignmentEngineContract):
         outcome = self.validate_inputs(request)
         base = {"warnings": outcome.warnings, "notes": request.notes}
 
+        # Bad data is reported before infeasibility: an empty cohort or a
+        # negative capacity is an input error, not a property of the problem.
+        # Errors that only restate an infeasibility reason (e.g. more fixed
+        # students than seats) leave the data valid but the problem unsolvable.
+        structural_errors = [
+            e for e in outcome.errors if e not in outcome.infeasibility_reasons
+        ]
+        if structural_errors:
+            return self._finish(
+                run,
+                contract.RunStatus.INVALID_INPUT,
+                {
+                    **base,
+                    "message": "The input data was rejected by validation.",
+                    "errors": structural_errors,
+                    "reasons": outcome.infeasibility_reasons,
+                },
+            )
         if not outcome.is_feasible:
             return self._finish(
                 run,
@@ -801,16 +819,6 @@ class AssignmentEngine(contract.AssignmentEngineContract):
                     **base,
                     "message": "No feasible assignment exists for these inputs.",
                     "reasons": outcome.infeasibility_reasons,
-                    "errors": outcome.errors,
-                },
-            )
-        if not outcome.is_valid:
-            return self._finish(
-                run,
-                contract.RunStatus.INVALID_INPUT,
-                {
-                    **base,
-                    "message": "The input data was rejected by validation.",
                     "errors": outcome.errors,
                 },
             )
