@@ -12,6 +12,9 @@ from typing import Any
 
 from app.domain import models
 
+# Indicator values are rounded to this many decimals for display and storage.
+DECIMALS = 4
+
 
 def calculate_assignment_skill_fit(
     student: models.Student,
@@ -19,9 +22,13 @@ def calculate_assignment_skill_fit(
 ) -> tuple[float, list[str]]:
     """Calculates skill fit score and unmet requirements for a student-project pair.
 
-    In compliance with Section 7.2 of the TECH5 specification, skill fit
-    evaluates how well the candidate student satisfies the required technical
-    skills of the target project.
+    The score is the average, over all of the project's requirements, of how
+    much of the required level the student reaches:
+
+        fit = mean over requirements k of min(1, student_level_k / required_k)
+
+    A requirement is unmet when the student's level is below the required
+    level. A project without requirements is a neutral, perfect fit (1.0).
 
     Args:
         student: The student under evaluation.
@@ -29,13 +36,20 @@ def calculate_assignment_skill_fit(
 
     Returns:
         A tuple of (skill_fit_score [0.0, 1.0], list_of_unmet_skill_ids).
-
-    Raises:
-        NotImplementedError: To be implemented by Team B.
     """
-    raise NotImplementedError(
-        "TODO (Team B): Implement calculate_assignment_skill_fit"
-    )
+    if not project.requirements:
+        return 1.0, []
+
+    total = 0.0
+    unmet: list[str] = []
+    for req in project.requirements:
+        level = student.get_skill_level(req.skill_id)
+        required = max(req.minimum_level, 1)
+        total += min(1.0, level / required)
+        if level < required:
+            unmet.append(req.skill_id)
+
+    return round(total / len(project.requirements), DECIMALS), unmet
 
 
 def calculate_gini(values: list[float]) -> float:
