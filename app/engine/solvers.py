@@ -22,7 +22,10 @@ preference score in [0, 1], sigma[s,p] = skill fit in [0, 1].
 
 import abc
 import dataclasses
+import logging
+import sqlite3
 import time
+import uuid
 from typing import Any
 
 import pyomo.environ as pyo
@@ -34,6 +37,8 @@ from app.domain import models
 from app.domain import validation
 from app.engine import metrics
 from app.persistence import repositories
+
+logger = logging.getLogger(__name__)
 
 SOLVER_NAME = "appsi_highs"
 
@@ -760,17 +765,186 @@ class AssignmentEngine(contract.AssignmentEngineContract):
     def execute_run(
         self, request: contract.RunRequest
     ) -> models.AssignmentRun:
-        """Executes the assignment algorithm, calculates metrics, and persists run.
+        """Validates, solves, evaluates and saves one assignment run.
 
-        To be implemented: validate, call generate_alternatives, compute
-        indicators with app.engine.metrics, and save via self.run_repo.
+        Every outcome is saved, also when the input is rejected or the
+        problem is infeasible, so that Component A can always load the run:
+        - INFEASIBLE: validation or the solver proved that no assignment
+          satisfies the hard constraints (reasons in diagnostics["reasons"]).
+        - INVALID_INPUT: the data has structural errors (diagnostics["errors"]).
+        - FAILED: the solver or the database failed (diagnostics["message"]).
+        - COMPLETED: one or more distinct alternatives with indicators.
 
-        Raises:
-            NotImplementedError: Not implemented yet.
+        Args:
+            request: The run request containing students, projects, etc.
+
+        Returns:
+            The saved AssignmentRun populated with alternative solutions.
         """
-        raise NotImplementedError(
-            "TODO (Team B): Implement execute_run in app/engine/solvers.py"
+        run = models.AssignmentRun(
+            id=str(uuid.uuid4()),
+            configuration={
+                "primary_strategy": request.strategy_key,
+                "max_alternatives": request.max_alternatives,
+                "engine": f"AssignmentEngine (ILP, Pyomo/{SOLVER_NAME})",
+                "notes": request.notes,
+            },
         )
+        outcome = self.validate_inputs(request)
+        base = {"warnings": outcome.warnings, "notes": request.notes}
+
+        if not outcome.is_feasible:
+            return self._finish(
+                run,
+                contract.RunStatus.INFEASIBLE,
+                {
+                    **base,
+                    "message": "No feasible assignment exists for these inputs.",
+                    "reasons": outcome.infeasibility_reasons,
+                    "errors": outcome.errors,
+                },
+            )
+        if not outcome.is_valid:
+            return self._finish(
+                run,
+                contract.RunStatus.INVALID_INPUT,
+                {
+                    **base,
+                    "message": "The input data was rejected by validation.",
+                    "errors": outcome.errors,
+                },
+            )
+
+        try:
+            self._synchronize_entities(request)
+            result = self.generate_alternatives(
+                request.students,
+                request.projects,
+                request.fixed_assignments,
+                request.strategy_key,
+                request.max_alternatives,
+            )
+        except KeyError as exc:
+            return self._finish(
+                run,
+                contract.RunStatus.INVALID_INPUT,
+                {**base, "message": str(exc.args[0]), "errors": [str(exc.args[0])]},
+            )
+        except (sqlite3.Error, RuntimeError, ValueError) as exc:
+            logger.exception("Assignment run %s failed", run.id)
+            return self._finish(
+                run,
+                contract.RunStatus.FAILED,
+                {**base, "message": f"Run failed: {type(exc).__name__}: {exc}"},
+            )
+
+        diagnostics = {**base, **result.diagnostics, "solver_status": result.status}
+        if result.status == STATUS_INFEASIBLE:
+            return self._finish(
+                run,
+                contract.RunStatus.INFEASIBLE,
+                {
+                    **diagnostics,
+                    "message": "The solver proved that no assignment satisfies "
+                    "all hard constraints.",
+                    "reasons": [
+                        "The combination of capacities, fixed assignments and "
+                        "mandatory skills cannot be met; no single check "
+                        "detects it before solving."
+                    ],
+                },
+            )
+        if not result.alternatives:
+            return self._finish(
+                run,
+                contract.RunStatus.FAILED,
+                {**diagnostics, "message": result.diagnostics["stop_reason"]},
+            )
+
+        run.solutions = self._build_solutions(run.id, request, result)
+        diagnostics["solution_count"] = len(run.solutions)
+        diagnostics["message"] = (
+            f"{len(run.solutions)} distinct alternative(s) generated. "
+            f"{result.diagnostics['stop_reason']}"
+        )
+        return self._finish(run, contract.RunStatus.COMPLETED, diagnostics)
+
+    def _build_solutions(
+        self,
+        run_id: str,
+        request: contract.RunRequest,
+        result: AlternativeSet,
+    ) -> list[models.Solution]:
+        """Creates Solution objects with indicators and dominance warnings."""
+        solutions: list[models.Solution] = []
+        for number, alt in enumerate(result.alternatives, start=1):
+            indicators = metrics.compute_solution_indicators(
+                request.students,
+                request.projects,
+                alt.assignments,
+                request.fixed_assignments,
+            )
+            solutions.append(
+                models.Solution(
+                    id=str(uuid.uuid4()),
+                    run_id=run_id,
+                    alternative_number=number,
+                    strategy_name=alt.strategy_name,
+                    objective_value=alt.objective_value,
+                    assignments=alt.assignments,
+                    indicators=indicators,
+                    diagnostics=alt.diagnostics,
+                )
+            )
+
+        for solution in solutions:
+            dominating = metrics.find_dominating_solutions(solution, solutions)
+            if dominating:
+                numbers = [d.alternative_number for d in dominating]
+                solution.diagnostics["dominated_by"] = numbers
+                label = "alternative" if len(numbers) == 1 else "alternatives"
+                solution.warnings.append(
+                    f"Dominated by {label} "
+                    f"{' and '.join(str(n) for n in numbers)}: each is at "
+                    "least as good on mean rank and mean skill fit and better "
+                    "on one of them, so this is not a real trade-off."
+                )
+        return solutions
+
+    def _synchronize_entities(self, request: contract.RunRequest) -> None:
+        """Saves cohort entities so that assignments satisfy foreign keys."""
+        skill_repo = repositories.SkillRepository(self.run_repo.db)
+        for skill in request.skills or []:
+            skill_repo.save(skill)
+        project_repo = repositories.ProjectRepository(self.run_repo.db)
+        for project in request.projects:
+            project_repo.save(project)
+        student_repo = repositories.StudentRepository(self.run_repo.db)
+        for student in request.students:
+            student_repo.save(student)
+        fixed_repo = repositories.FixedAssignmentRepository(self.run_repo.db)
+        for fixed in request.fixed_assignments or []:
+            fixed_repo.save(fixed)
+
+    def _finish(
+        self,
+        run: models.AssignmentRun,
+        status: contract.RunStatus,
+        diagnostics: dict[str, Any],
+    ) -> models.AssignmentRun:
+        """Sets status and diagnostics, saves the run and returns it."""
+        run.status = status.value
+        run.diagnostics = diagnostics
+        try:
+            self.run_repo.save_run(run)
+        except sqlite3.Error as exc:
+            logger.exception("Could not save run %s", run.id)
+            run.status = contract.RunStatus.FAILED.value
+            run.diagnostics = {
+                **diagnostics,
+                "message": f"The run could not be saved: {exc}",
+            }
+        return run
 
     def run_assignment(
         self,
