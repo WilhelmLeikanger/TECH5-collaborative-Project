@@ -374,10 +374,13 @@ def list_projects() -> str:
     """Displays project catalog and capacity definitions."""
     projects = repositories.ProjectRepository().list_all()
     skills = repositories.SkillRepository().list_all()
+    skill_names = {sk.id: sk.name for sk in skills}
     return flask.render_template(
-        "projects.html", projects=projects, skills=skills
+        "projects.html",
+        projects=projects,
+        skills=skills,
+        skill_names=skill_names,
     )
-
 
 @web_bp.get("/projects/new")
 def new_project_form() -> str:
@@ -388,16 +391,124 @@ def new_project_form() -> str:
     )
 
 
+def _parse_project_form(
+    project_id: str,
+) -> tuple[models.Project | None, str | None]:
+    """Reads the project form and builds a Project, or returns an error.
+
+    Args:
+        project_id: Identifier the project should be saved under.
+
+    Returns:
+        A tuple of (project, error_message). Exactly one of them is None.
+    """
+    form = flask.request.form
+    title = form.get("title", "").strip()
+    description = form.get("description", "").strip()
+
+    if not title:
+        return None, "Project title cannot be empty."
+
+    # Capacities: must be whole numbers, min >= 0, max >= 1, min <= max.
+    try:
+        min_capacity = int(form.get("min_capacity", "0") or 0)
+        max_capacity = int(form.get("max_capacity", "1") or 1)
+    except ValueError:
+        return None, "Capacities must be whole numbers."
+
+    if min_capacity < 0:
+        return None, "Minimum capacity cannot be negative."
+    if max_capacity < 1:
+        return None, "Maximum capacity must be at least 1."
+    if min_capacity > max_capacity:
+        return None, (
+            f"Minimum capacity ({min_capacity}) cannot exceed "
+            f"maximum capacity ({max_capacity})."
+        )
+
+    # Skill requirements: one row per catalogued skill, named
+    # req_level_<skill_id> (0 to 5) and req_mand_<skill_id> (checkbox).
+    valid_skills = {s.id for s in repositories.SkillRepository().list_all()}
+    requirements: list[models.ProjectRequirement] = []
+    for key, val in form.items():
+        if not key.startswith("req_level_"):
+            continue
+        skill_id = key.replace("req_level_", "")
+        if skill_id not in valid_skills:
+            continue
+        try:
+            level = int(val or 0)
+        except ValueError:
+            return None, f"Invalid level for skill '{skill_id}'."
+        if level < 0 or level > 5:
+            return None, (
+                f"Level for skill '{skill_id}' must be between 0 and 5."
+            )
+        if level == 0:
+            continue  # 0 means "not required"
+        is_mandatory = form.get(f"req_mand_{skill_id}") == "1"
+        requirements.append(
+            models.ProjectRequirement(
+                project_id=project_id,
+                skill_id=skill_id,
+                minimum_level=level,
+                is_mandatory=is_mandatory,
+            )
+        )
+
+    project = models.Project(
+        id=project_id,
+        title=title,
+        description=description,
+        min_capacity=min_capacity,
+        max_capacity=max_capacity,
+        requirements=requirements,
+    )
+    return project, None
+
+
 @web_bp.post("/projects/new")
 def create_project() -> flask.Response:
-    """Processes creation of a project.
+    """Processes creation of a project."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project creation and requirement parsing"
+    p_id = flask.request.form.get("id", "").strip()
+    if not p_id:
+        flask.flash("Project ID cannot be empty.", "warning")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    if repositories.ProjectRepository().get_by_id(p_id):
+        flask.flash(f"Project ID '{p_id}' already exists.", "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    project, error = _parse_project_form(p_id)
+    if error:
+        flask.flash(error, "danger")
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    try:
+        repositories.ProjectRepository().save(project)
+    except sqlite3.IntegrityError as exc:
+        flask.flash(
+            f"Database constraint error while saving project: {exc}",
+            "danger",
+        )
+        return flask.redirect(
+            flask.url_for("visualization_web.new_project_form")
+        )
+
+    flask.flash(
+        f"Project '{project.title}' ({p_id}) created successfully.", "success"
     )
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 @web_bp.get("/projects/<project_id>/edit")
@@ -416,27 +527,77 @@ def edit_project_form(project_id: str) -> Any:
 
 @web_bp.post("/projects/<project_id>/edit")
 def update_project(project_id: str) -> flask.Response:
-    """Updates an existing project entity.
+    """Updates an existing project entity."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied for current role.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project update and requirement parsing"
+    repo = repositories.ProjectRepository()
+    if not repo.get_by_id(project_id):
+        flask.flash(f"Project '{project_id}' not found.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
+
+    edit_url = flask.url_for(
+        "visualization_web.edit_project_form", project_id=project_id
     )
+
+    project, error = _parse_project_form(project_id)
+    if error:
+        flask.flash(error, "danger")
+        return flask.redirect(edit_url)
+
+    try:
+        repo.save(project)
+    except sqlite3.IntegrityError as exc:
+        flask.flash(
+            f"Database constraint error while updating project: {exc}",
+            "danger",
+        )
+        return flask.redirect(edit_url)
+
+    flask.flash(f"Project '{project_id}' updated.", "success")
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 
 @web_bp.post("/projects/<project_id>/delete")
 def delete_project(project_id: str) -> flask.Response:
-    """Deletes a project.
+    """Deletes a project."""
+    if not auth.can_edit_cohort_data():
+        flask.flash("Permission denied.", "danger")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
-    Raises:
-        NotImplementedError: To be implemented by Team A.
-    """
-    raise NotImplementedError(
-        "TODO (Team A): Implement project deletion"
-    )
+    # Deleting a project cascades in the database: student preferences and
+    # fixed assignments pointing at it disappear too. Tell the user so the
+    # side effect is visible rather than silent.
+    affected_students = [
+        s.id
+        for s in repositories.StudentRepository().list_all()
+        if any(pref.project_id == project_id for pref in s.preferences)
+    ]
+    affected_locks = [
+        fa.student_id
+        for fa in repositories.FixedAssignmentRepository().list_all()
+        if fa.project_id == project_id
+    ]
 
+    deleted = repositories.ProjectRepository().delete(project_id)
+    if not deleted:
+        flask.flash(f"Project '{project_id}' not found.", "warning")
+        return flask.redirect(flask.url_for("visualization_web.list_projects"))
+
+    message = f"Project '{project_id}' removed."
+    if affected_students:
+        message += (
+            f" It was removed from the preferences of "
+            f"{len(affected_students)} student(s)."
+        )
+    if affected_locks:
+        message += (
+            f" {len(affected_locks)} fixed assignment(s) to it were "
+            f"also removed."
+        )
+    flask.flash(message, "warning" if (affected_students or affected_locks) else "info")
+    return flask.redirect(flask.url_for("visualization_web.list_projects"))
 
 # -----------------------------------------------------------------------------
 # Skills CRUD & Preferences Editor
