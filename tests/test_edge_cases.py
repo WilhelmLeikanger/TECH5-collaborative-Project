@@ -19,17 +19,11 @@ specification:
 15. Strict avoidance of duplicate solutions via no-good integer cuts.
 """
 
-import pytest
-
 from app.domain import models
 from app.domain import validation
 from app.engine import solvers
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_1_incomplete_preferences() -> None:
     """Case 1: Student submits preferences for only a subset of projects."""
     skills = [models.Skill(id="py", name="Python")]
@@ -55,10 +49,6 @@ def test_edge_case_1_incomplete_preferences() -> None:
     assert run.solutions[0].assignments[0].student_id == "S1"
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_2_tied_preferences_across_students() -> None:
     """Case 2: All students have identical top-choice preference."""
     skills = [models.Skill(id="py", name="Python")]
@@ -96,10 +86,6 @@ def test_edge_case_2_tied_preferences_across_students() -> None:
     assert len(p1_allocations) == 1
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_3_zero_skills_student() -> None:
     """Case 3: Student has no declared skills against required project."""
     skills = [models.Skill(id="py", name="Python")]
@@ -128,10 +114,6 @@ def test_edge_case_3_zero_skills_student() -> None:
     assert run.solutions[0].assignments[0].skill_fit_score == 0.0
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_4_zero_requirements_project() -> None:
     """Case 4: Project specifies no skill requirements."""
     skills = [models.Skill(id="py", name="Python")]
@@ -346,10 +328,6 @@ def test_edge_case_12_unavailable_mandatory_skill() -> None:
     assert any("Mandatory requirement impossible" in err for err in res.errors)
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_13_no_feasible_solution() -> None:
     """Case 13: Mathematical infeasibility detection by solver."""
     skills = [models.Skill(id="py", name="Python")]
@@ -368,10 +346,6 @@ def test_edge_case_13_no_feasible_solution() -> None:
     assert len(run.solutions) == 0
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_14_single_feasible_solution() -> None:
     """Case 14: Only exactly 1 feasible allocation exists."""
     skills = [models.Skill(id="py", name="Python")]
@@ -392,10 +366,6 @@ def test_edge_case_14_single_feasible_solution() -> None:
     assert run.diagnostics.get("distinct_alternatives") == 1
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team B): Implement solver formulation",
-)
 def test_edge_case_15_duplicate_avoidance_no_good_cuts() -> None:
     """Case 15: Distinct alternatives guarantee via no-good cuts."""
     skills = [models.Skill(id="py", name="Python")]
