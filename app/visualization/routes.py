@@ -873,6 +873,156 @@ def view_run(run_id: str) -> Any:
     )
 
 
+def _describe_gini(gini: float) -> str:
+    """Turns a rank Gini coefficient into a plain-language reading."""
+    if gini < 0.1:
+        return "Very even: students received similarly ranked outcomes."
+    if gini < 0.25:
+        return "Fairly even: most students fared alike, with small differences."
+    if gini < 0.4:
+        return "Uneven: a noticeable gap between the best and worst served."
+    return "Very uneven: a few students carry most of the disappointment."
+
+
+def _build_fairness_summary(
+    solution: models.Solution,
+    students: dict[str, models.Student],
+    projects: dict[str, models.Project],
+) -> dict[str, Any]:
+    """Prepares the fairness section for a solution page.
+
+    Converts the engine's fairness indicators into things a decision-maker
+    can act on: a rank distribution, the named students who fell outside
+    their stated preferences, the named students with the least desirable
+    outcome, and a one-sentence headline.
+
+    Args:
+        solution: The solution whose assignments are displayed.
+        students: Map of student ID to Student.
+        projects: Map of project ID to Project.
+
+    Returns:
+        A dictionary consumed by solution_detail.html.
+    """
+    assignments = solution.assignments
+    total = len(assignments)
+
+    def _title(project_id: str) -> str:
+        proj = projects.get(project_id)
+        return proj.title if proj else project_id
+
+    def _name(student_id: str) -> str:
+        stud = students.get(student_id)
+        return stud.display_name if stud else student_id
+
+    # Distribution of assigned ranks, as bars.
+    ranked = [a.preference_rank for a in assignments if a.preference_rank]
+    max_rank = max(ranked) if ranked else 0
+    bars: list[dict[str, Any]] = []
+    for rank in range(1, max_rank + 1):
+        count = sum(r == rank for r in ranked)
+        bars.append(
+            {
+                "label": f"{rank}{'st' if rank == 1 else 'nd' if rank == 2 else 'rd' if rank == 3 else 'th'} choice",
+                "count": count,
+                "pct": round(100.0 * count / total, 1) if total else 0.0,
+                "tone": "success" if rank == 1 else "primary" if rank == 2 else "warning",
+            }
+        )
+    unranked = [a for a in assignments if a.preference_rank is None]
+    if unranked:
+        bars.append(
+            {
+                "label": "Not ranked",
+                "count": len(unranked),
+                "pct": round(100.0 * len(unranked) / total, 1) if total else 0.0,
+                "tone": "danger",
+            }
+        )
+
+    # Students assigned outside their stated preferences, by name.
+    outside = []
+    for asg in unranked:
+        stud = students.get(asg.student_id)
+        wanted = (
+            [_title(p.project_id) for p in sorted(stud.preferences, key=lambda p: p.rank)]
+            if stud
+            else []
+        )
+        outside.append(
+            {
+                "student_id": asg.student_id,
+                "name": _name(asg.student_id),
+                "assigned": _title(asg.project_id),
+                "wanted": wanted,
+                "is_fixed": asg.is_fixed,
+            }
+        )
+
+    # Least desirable individual outcome. If anyone is unranked, that is the
+    # worst case; otherwise the highest rank number. Several students can tie.
+    worst = []
+    if unranked:
+        worst_label = "assigned a project they did not rank"
+        worst_group = unranked
+    elif ranked:
+        worst_label = f"received their {bars[max_rank - 1]['label']}"
+        worst_group = [a for a in assignments if a.preference_rank == max_rank]
+    else:
+        worst_label = ""
+        worst_group = []
+    for asg in worst_group:
+        stud = students.get(asg.student_id)
+        first = None
+        if stud and stud.preferences:
+            first = _title(min(stud.preferences, key=lambda p: p.rank).project_id)
+        worst.append(
+            {
+                "student_id": asg.student_id,
+                "name": _name(asg.student_id),
+                "assigned": _title(asg.project_id),
+                "rank": asg.preference_rank,
+                "first_choice": first,
+                "is_fixed": asg.is_fixed,
+            }
+        )
+
+    fair = solution.indicators.get("fairness", {})
+    gini = float(fair.get("rank_gini", 0.0) or 0.0)
+
+    # Headline sentence.
+    top_two = sum(r <= 2 for r in ranked)
+    if total == 0:
+        headline = "No students were assigned in this solution."
+    else:
+        headline = (
+            f"{top_two} of {total} students received their first or second choice."
+        )
+        if unranked:
+            names = ", ".join(_name(a.student_id) for a in unranked[:3])
+            more = f" and {len(unranked) - 3} more" if len(unranked) > 3 else ""
+            headline += (
+                f" {len(unranked)} student{'s' if len(unranked) != 1 else ''}"
+                f" ({names}{more}) got a project they did not rank."
+            )
+        elif worst_group and max_rank > 2:
+            headline += (
+                f" The least satisfied {'student' if len(worst_group) == 1 else 'students'}"
+                f" {worst_label}."
+            )
+
+    return {
+        "headline": headline,
+        "bars": bars,
+        "outside": outside,
+        "worst": worst,
+        "worst_label": worst_label,
+        "gini": gini,
+        "gini_text": _describe_gini(gini),
+        "total": total,
+    }
+
+
 @web_bp.get("/solutions/<solution_id>")
 def view_solution(solution_id: str) -> Any:
     """Displays complete student assignment details for a solution."""
@@ -885,6 +1035,7 @@ def view_solution(solution_id: str) -> Any:
     run = repo.get_run(solution.run_id)
     students = {s.id: s for s in repositories.StudentRepository().list_all()}
     projects = {p.id: p for p in repositories.ProjectRepository().list_all()}
+    fairness = _build_fairness_summary(solution, students, projects)
 
     return flask.render_template(
         "solution_detail.html",
@@ -892,6 +1043,7 @@ def view_solution(solution_id: str) -> Any:
         run=run,
         students=students,
         projects=projects,
+        fairness=fairness,
     )
 
 
