@@ -10,6 +10,10 @@ from typing import Any
 
 from app.domain import models
 
+MIN_PREFERENCES = 3
+MIN_SKILL_LEVEL = 1
+MAX_SKILL_LEVEL = 5
+
 
 @dataclasses.dataclass
 class ValidationResult:
@@ -123,7 +127,18 @@ def validate_cohort(
                 f"Student '{student.display_name}' ({student.id}) has "
                 "submitted no ranked preferences."
             )
+        elif len(student.preferences) < MIN_PREFERENCES:
+            # Allowed partial input: the student is still assigned, but any
+            # project they did not rank counts as an unranked outcome.
+            result.warnings.append(
+                f"Student '{student.id}' ranked {len(student.preferences)} "
+                f"project(s); at least {MIN_PREFERENCES} are expected. "
+                "Unranked projects count as outside their preferences."
+            )
 
+        # Tied ranks and repeated projects make the ranking ambiguous and
+        # cannot be stored (UNIQUE constraints on preferences), so they are
+        # rejected here instead of failing later at the database write.
         seen_ranks: set[int] = set()
         seen_preferred_projects: set[str] = set()
         for pref in student.preferences:
@@ -133,17 +148,31 @@ def validate_cohort(
                     f"'{pref.project_id}'."
                 )
             if pref.project_id in seen_preferred_projects:
-                result.warnings.append(
+                result.errors.append(
                     f"Student '{student.id}' has multiple preferences for "
                     f"project '{pref.project_id}'."
                 )
             seen_preferred_projects.add(pref.project_id)
 
+            if pref.rank < 1:
+                result.errors.append(
+                    f"Student '{student.id}' has invalid rank {pref.rank}; "
+                    "ranks start at 1."
+                )
             if pref.rank in seen_ranks:
-                result.warnings.append(
-                    f"Student '{student.id}' has duplicate rank {pref.rank}."
+                result.errors.append(
+                    f"Student '{student.id}' has tied preferences: rank "
+                    f"{pref.rank} is used more than once."
                 )
             seen_ranks.add(pref.rank)
+
+        for s_id, level in student.skills.items():
+            if not MIN_SKILL_LEVEL <= level <= MAX_SKILL_LEVEL:
+                result.errors.append(
+                    f"Student '{student.id}' has skill '{s_id}' at level "
+                    f"{level}; levels must be {MIN_SKILL_LEVEL} to "
+                    f"{MAX_SKILL_LEVEL}."
+                )
 
         if defined_skill_ids:
             for s_id in student.skills:
@@ -154,6 +183,13 @@ def validate_cohort(
                     )
 
     for project in projects:
+        for req in project.requirements:
+            if not MIN_SKILL_LEVEL <= req.minimum_level <= MAX_SKILL_LEVEL:
+                result.errors.append(
+                    f"Project '{project.id}' requires skill '{req.skill_id}' "
+                    f"at level {req.minimum_level}; levels must be "
+                    f"{MIN_SKILL_LEVEL} to {MAX_SKILL_LEVEL}."
+                )
         if defined_skill_ids:
             for req in project.requirements:
                 if req.skill_id not in defined_skill_ids:
