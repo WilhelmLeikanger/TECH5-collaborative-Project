@@ -3,6 +3,8 @@
 {% block title %}{% if project %}Edit Project {{ project.id }}{% else %}New Project{% endif %} - TECH5{% endblock %}
 
 {% block content %}
+{% set existing_reqs = {} %}
+{% if project %}{% for r in project.requirements %}{% set _ = existing_reqs.update({r.skill_id: r}) %}{% endfor %}{% endif %}
 <div class="card" style="max-width: 750px; margin: 0 auto;">
   <div class="card-header">
     <h2 class="card-title">{% if project %}Edit Project: {{ project.title }} ({{ project.id }}){% else %}Create New Semester Project{% endif %}</h2>
@@ -10,13 +12,6 @@
   </div>
 
   <div class="card-body">
-    <!-- TODO (Team A): Implement Project Creation/Edit Form -->
-    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
-      <strong>Team A Starter Carcass:</strong>
-      Implement the form fields below to capture project attributes (ID, title, description, min/max capacities)
-      and the project skill requirements matrix (proficiency levels 1–5 and mandatory constraint flags).
-    </div>
-
     <form action="{% if project %}{{ url_for('visualization_web.update_project', project_id=project.id) }}{% else %}{{ url_for('visualization_web.create_project') }}{% endif %}" method="POST">
       <div class="grid-2">
         <div class="form-group">
@@ -50,14 +45,17 @@
         </div>
       </div>
 
-      <!-- TODO (Team A): Implement Skill Requirements Matrix -->
       <div class="form-group" style="margin-top: 1rem;">
         <label class="form-label">Skill Requirements:</label>
         <div style="background: #f8fafc; border: 1px solid var(--border-color); border-radius: var(--radius-md); padding: 1rem;">
           <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 0.75rem;">
-            <!-- TODO (Team A): Loop over catalogued skills, provide minimum level input and mandatory checkbox -->
             Configure required skill proficiency levels (0-5) and designate mandatory requirements:
           </p>
+          {% if not skills %}
+            <p style="color: var(--warning); font-size: 0.88rem;">
+              No skills in the catalogue yet. Add skills under <a href="{{ url_for('visualization_web.list_skills') }}">Skills</a> to define requirements.
+            </p>
+          {% endif %}
           <table class="data-table" style="background: transparent;">
             <thead>
               <tr>
@@ -68,13 +66,15 @@
             </thead>
             <tbody>
               {% for sk in skills %}
+                {% set existing = existing_reqs.get(sk.id) if existing_reqs else none %}
                 <tr>
                   <td><strong>{{ sk.name }}</strong> (<code>{{ sk.id }}</code>)</td>
                   <td style="width: 150px;">
-                    <input type="number" name="req_level_{{ sk.id }}" min="0" max="5" class="form-control" value="0">
+                    <input type="number" name="req_level_{{ sk.id }}" min="0" max="5" class="form-control"
+                           value="{{ existing.minimum_level if existing else 0 }}">
                   </td>
                   <td style="text-align: center; width: 150px;">
-                    <input type="checkbox" name="req_mand_{{ sk.id }}" value="1">
+                    <input type="checkbox" name="req_mand_{{ sk.id }}" value="1" {% if existing and existing.is_mandatory %}checked{% endif %}>
                   </td>
                 </tr>
               {% endfor %}

@@ -220,10 +220,6 @@ def test_skills_crud_workflow(tmp_path: pathlib.Path) -> None:
     assert b"not found" in res_missing.data
 
 
-@pytest.mark.xfail(
-    raises=NotImplementedError,
-    reason="TODO (Team A): Implement project CRUD",
-)
 def test_projects_crud_workflow(tmp_path: pathlib.Path) -> None:
     """Verifies project addition workflow (Team A implementation)."""
     db_file = tmp_path / "test_proj.db"
