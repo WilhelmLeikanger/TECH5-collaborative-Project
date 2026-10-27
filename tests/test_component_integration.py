@@ -10,6 +10,7 @@ import pathlib
 
 from app import create_app
 from app.contract import contract
+from app.domain import models
 from app.engine import solvers
 from app.persistence import repositories
 
@@ -142,3 +143,75 @@ def test_infeasible_cohort_integration(tmp_path: pathlib.Path) -> None:
     assert len(runs) == 1
     assert runs[0].status == "INFEASIBLE"
     assert runs[0].diagnostics
+
+
+def _allocation_map(
+    solution: models.Solution,
+) -> dict[str, tuple[str, bool, int | None]]:
+    """Maps each student to (project, is_fixed, preference_rank)."""
+    return {
+        a.student_id: (a.project_id, a.is_fixed, a.preference_rank)
+        for a in solution.assignments
+    }
+
+
+def test_data_survives_app_restart(tmp_path: pathlib.Path) -> None:
+    """Tests that UI-entered data and runs persist across app restarts."""
+    db_file = tmp_path / "test_restart_persistence.db"
+
+    # Session 1: enter data and trigger a run through Component A
+    app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
+    client = app.test_client()
+    client.post("/load-scenario/standard", follow_redirects=True)
+    client.post(
+        "/skills/new",
+        data={"id": "viz", "name": "Data Visualization"},
+        follow_redirects=True,
+    )
+    client.post(
+        "/fixed-assignments/new",
+        data={
+            "student_id": "S02",
+            "project_id": "P2",
+            "status": "APPROVED",
+            "reason": "Persistence check",
+        },
+        follow_redirects=True,
+    )
+    client.post(
+        "/runs/trigger",
+        data={"primary_strategy": "PREFERENCE", "max_alternatives": 2},
+        follow_redirects=True,
+    )
+    run_before = repositories.RunRepository().list_runs(limit=1)[0]
+    run_before = repositories.RunRepository().get_run(run_before.id)
+    assert run_before is not None
+    assert run_before.solutions
+
+    # Session 2: a fresh application instance on the same database file
+    app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
+    client = app.test_client()
+
+    # Cohort data entered through the UI is still present
+    assert repositories.SkillRepository().get_by_id("viz") is not None
+    assert b"Data Visualization" in client.get("/skills").data
+    fixed = repositories.FixedAssignmentRepository().list_all()
+    assert [(f.student_id, f.project_id) for f in fixed] == [("S02", "P2")]
+
+    # The run and all its solutions are reloaded unchanged
+    run_after = repositories.RunRepository().get_run(run_before.id)
+    assert run_after is not None
+    assert run_after.status == run_before.status
+    assert len(run_after.solutions) == len(run_before.solutions)
+    for sol_before, sol_after in zip(
+        run_before.solutions, run_after.solutions
+    ):
+        assert sol_after.id == sol_before.id
+        assert _allocation_map(sol_after) == _allocation_map(sol_before)
+        assert sol_after.indicators == sol_before.indicators
+
+    # Component A renders the reloaded run and solution
+    assert client.get(f"/runs/{run_after.id}").status_code == 200
+    sol_view = client.get(f"/solutions/{run_after.solutions[0].id}")
+    assert sol_view.status_code == 200
+    assert b"S02" in sol_view.data
