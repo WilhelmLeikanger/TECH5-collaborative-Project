@@ -15,7 +15,7 @@ class Config:
     DATABASE_PATH: Path = DATA_DIR / "tech5_assignment.db"
     API_VERSION: str = "v1"
     DEFAULT_MAX_SOLUTIONS: int = 3
-    PULP_TIME_LIMIT_SECONDS: int = 15
+    SOLVER_TIME_LIMIT_SECONDS: int = 15
 
 
 class TestingConfig(Config):

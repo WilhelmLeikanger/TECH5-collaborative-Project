@@ -81,10 +81,12 @@ def test_contract_execute_and_retrieval(tmp_path: pathlib.Path) -> None:
         max_alternatives=2,
     )
 
-    # 1. AssignmentEngine skeleton raises NotImplementedError for Team B
+    # 1. AssignmentEngine executes and saves the run (updated by Team B:
+    #    the starter version expected NotImplementedError)
     engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
-    with pytest.raises(NotImplementedError):
-        engine.execute_run(request)
+    real_run = engine.execute_run(request)
+    assert real_run.status == "COMPLETED"
+    assert engine.get_run(real_run.id) is not None
 
     # 2. MockAssignmentEngine fulfills contract execution and persistence
     mock_engine: contract.AssignmentEngineContract = (
@@ -148,10 +150,12 @@ def test_contract_compare_solutions(tmp_path: pathlib.Path) -> None:
     with pytest.raises(KeyError):
         mock_engine.compare_solutions(sol_a.id, "non_existent_id")
 
-    # AssignmentEngine delegates to metrics which raises NotImplementedError
+    # AssignmentEngine compares through metrics (updated by Team B: the
+    # starter version expected NotImplementedError)
     engine: contract.AssignmentEngineContract = solvers.AssignmentEngine()
-    with pytest.raises(NotImplementedError):
-        engine.compare_solutions(sol_a.id, sol_b.id)
+    real = engine.compare_solutions(sol_a.id, sol_b.id)
+    assert real.solution_a_id == sol_a.id
+    assert real.changed_students_count == comparison.changed_students_count
 
 
 def test_mock_engine_provided() -> None:

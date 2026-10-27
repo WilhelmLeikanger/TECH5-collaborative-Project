@@ -1,0 +1,604 @@
+\documentclass[11pt,a4paper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{mathpazo}
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{microtype}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{array}
+\usepackage{enumitem}
+\usepackage{xcolor}
+\usepackage[hidelinks]{hyperref}
+\usepackage{caption}
+
+\setlist{itemsep=2pt,topsep=4pt}
+\captionsetup{font=small,labelfont=bf}
+\setlength{\parskip}{4pt}
+\setlength{\parindent}{0pt}
+\renewcommand{\arraystretch}{1.15}
+
+\newcommand{\code}[1]{\texttt{#1}}
+\newcolumntype{L}{>{\raggedright\arraybackslash}X}
+
+\begin{document}
+
+\begin{center}
+{\LARGE\bfseries Deliverable 6: Analytical Note}\\[4pt]
+{\large Student-to-Project Assignment Decision Support System}\\[10pt]
+TECH5 Programming and Application Design, NHH Norwegian School of Economics\\[8pt]
+\begin{tabular}{ll}
+\textbf{Group:} & 15\\
+\textbf{Team B (Assignment Engine):} & Derek Liang, Aayush [surname], Ole Theodor [surname]\\
+\textbf{Team A (Visualization):} & [names]\\
+\textbf{Date:} & [submission date]
+\end{tabular}
+\end{center}
+
+\vspace{6pt}
+\noindent\textbf{Summary.}
+We assign students to projects with an integer linear program (ILP). All
+business rules that must never be broken (one project per student, capacities,
+fixed assignments, mandatory skills) are hard constraints. Three strategies
+change only the objective: preference, skill fit, and a balanced strategy that
+first protects the worst-off student. Up to $K$ distinct alternatives are
+generated with no-good cuts, and impossible problems are reported as
+infeasible rather than silently relaxed. Each alternative is evaluated on
+feasibility, efficiency, fairness and capacity, and recommendations are made
+per policy priority so that the decision-maker sees the trade-off instead of a
+single score.
+
+\section{Problem definition and modelling approach}
+
+\subsection{Business context and decision dilemma}
+
+A programme coordinator must assign a cohort of students to semester-long
+business projects, as in the CEMS Business Projects at NHH. Students rank the
+projects they prefer and have skills at levels 1--5; projects have a minimum
+and maximum number of students, desired skills and some mandatory skills; and
+the administration may already have fixed some assignments. The objectives
+conflict: giving many students their first choice can leave a project without
+the skills it needs, and maximising average satisfaction can leave one student
+with a very poor outcome. Rezaeinia, G\'oez and Guajardo~\cite{rezaeinia2022}
+study this setting for an NHH master's programme and show that efficiency and
+fairness have to be treated as separate criteria. Following that insight, our
+system does not hide the conflict behind one score: it produces several
+feasible alternatives that each favour a different criterion, and it reports
+indicators that make the differences visible.
+
+\subsection{Chosen methodology and justification}
+
+We use binary integer programming, modelled with Pyomo~\cite{pyomo} and solved
+with the HiGHS solver~\cite{highs} (\code{appsi\_highs}), the same tools as in
+TECH4. The model is a generalised
+\emph{assignment problem}~\cite[Ch.~9.3]{ior}: every student is assigned to
+exactly one project, but a project receives between $l_p$ and $u_p$ students
+instead of exactly one. Additional business rules are added with the standard
+binary-variable techniques for logical relationships~\cite[Ch.~12]{ior}.
+
+We chose ILP over the alternatives the brief mentions for four reasons.
+\begin{enumerate}
+  \item \textbf{Every rule maps to one constraint.} Capacities, fixed
+        assignments and mandatory skills are linear constraints, which makes
+        the model easy to inspect and explain. A greedy rule-based procedure
+        needs repair steps for minimum capacities and mandatory skills, and
+        stable matching loses its guarantees once lower quotas are added.
+  \item \textbf{Infeasibility is proven.} When no assignment satisfies the
+        hard constraints, branch-and-bound~\cite[Ch.~12.6]{ior} proves it. A
+        heuristic that fails cannot distinguish ``impossible'' from ``not
+        found''.
+  \item \textbf{Distinct alternatives are exact.} No-good cuts
+        (constraint~\eqref{eq:nogood}) guarantee that every alternative
+        differs from all earlier ones in at least one student's project, which
+        is exactly the brief's definition of a distinct alternative.
+  \item \textbf{The problem is small.} The model has $|S|\cdot|P| + |P|$
+        binary variables: 44 for the 10-student demo cohort, which HiGHS solves
+        in a few hundredths of a second inside the single-process Flask
+        application.
+\end{enumerate}
+
+\section{Mathematical formulation}
+
+\subsection{Index sets}
+\begin{itemize}
+  \item $S$: students in the cohort, $|S| = n$.
+  \item $P$: projects, $|P| = m$.
+  \item $K_p$: skills required by project $p$ (mandatory and desired);
+        $M_p \subseteq K_p$: the mandatory ones.
+  \item $F \subseteq S \times P$: fixed administrative assignments;
+        $S_F = \{ s : (s,p) \in F \}$: students with a fixed assignment.
+  \item $\mathcal{A} = \{A^{(1)}, \dots, A^{(j)}\}$: solutions found earlier
+        in the same run, each a set of $n$ student--project pairs.
+\end{itemize}
+
+\subsection{Parameters}
+\begin{itemize}
+  \item $l_p \in \mathbb{Z}_{\ge 0}$, $u_p \in \mathbb{Z}_{\ge 1}$: minimum
+        and maximum number of students on project $p$, $l_p \le u_p$.
+  \item $r_{sp}$: preference rank of student $s$ for project $p$
+        (1 = first choice). An unranked project gets $r_{sp} = m + 1$.
+  \item $u_{sp} = (m + 1 - r_{sp})/m \in [0,1]$: preference score, 1 for a
+        first choice and 0 for an unranked project.
+  \item $\lambda_{sk} \in \{0,\dots,5\}$: level of student $s$ in skill $k$
+        (0 if not held); $L_{pk} \in \{1,\dots,5\}$: level project $p$
+        requires in skill $k$.
+  \item $\sigma_{sp} \in [0,1]$: skill fit of student $s$ on project $p$, the
+        average share of each required level that the student reaches:
+        \begin{equation}
+          \sigma_{sp} =
+          \begin{cases}
+            \dfrac{1}{|K_p|} \displaystyle\sum_{k \in K_p}
+              \min\!\left(1, \dfrac{\lambda_{sk}}{L_{pk}}\right)
+              & \text{if } K_p \neq \emptyset,\\[8pt]
+            1 & \text{if } K_p = \emptyset.
+          \end{cases}
+          \label{eq:fit}
+        \end{equation}
+        A project without requirements is a neutral, perfect fit. A student
+        with no relevant skills has fit 0 but can still be assigned.
+  \item $\varepsilon = 0.001$: tie-break weight (Section~\ref{sec:obj}).
+\end{itemize}
+
+\subsection{Decision variables}
+\begin{align*}
+  x_{sp} &= \begin{cases} 1 & \text{if student $s$ is assigned to project $p$,}\\
+                           0 & \text{otherwise,} \end{cases}
+  & \forall s \in S,\ p \in P,\\[4pt]
+  y_p &= \begin{cases} 1 & \text{if project $p$ runs (has at least one student),}\\
+                        0 & \text{otherwise,} \end{cases}
+  & \forall p \in P.
+\end{align*}
+The balanced strategy adds one continuous auxiliary variable $z \ge 0$, the
+worst assigned rank (Section~\ref{sec:obj}).
+
+\subsection{Hard constraints}
+
+These constraints are identical for every strategy; they are implemented once,
+in the class \code{AssignmentModel} in \code{app/engine/solvers.py}.
+\begin{align}
+  \sum_{p \in P} x_{sp} &= 1 && \forall s \in S
+    \label{eq:one}\\
+  \sum_{s \in S} x_{sp} &\ge l_p && \forall p \in P
+    \label{eq:min}\\
+  \sum_{s \in S} x_{sp} &\le u_p \, y_p && \forall p \in P
+    \label{eq:max}\\
+  \sum_{s \in S} x_{sp} &\ge y_p && \forall p \in P
+    \label{eq:runs}\\
+  x_{sp} &= 1 && \forall (s,p) \in F
+    \label{eq:fixed}\\
+  \sum_{s \in S \,:\, \lambda_{sk} \ge L_{pk}} x_{sp} &\ge y_p
+    && \forall p \in P,\ k \in M_p
+    \label{eq:mand}\\
+  \sum_{(s,p) \in A} x_{sp} &\le n - 1 && \forall A \in \mathcal{A}
+    \label{eq:nogood}\\
+  x_{sp},\, y_p &\in \{0,1\} && \forall s \in S,\ p \in P \notag
+\end{align}
+
+\begin{description}[leftmargin=0pt,font=\normalfont\bfseries]
+  \item[\eqref{eq:one} One project per student.] Every student receives
+        exactly one project.
+  \item[\eqref{eq:min}--\eqref{eq:max} Capacity.] Each project receives
+        between $l_p$ and $u_p$ students. The minimum applies to every project,
+        consistent with input validation.
+  \item[\eqref{eq:max}--\eqref{eq:runs} Linking $y_p$ to $x_{sp}$.] Together
+        these force $y_p = 1$ exactly when project $p$ has at least one
+        student. Constraint~\eqref{eq:max} is the big-$M$ linking constraint
+        of the fixed-charge problem~\cite[Ch.~12.3]{ior} with the tightest
+        valid $M = u_p$; constraint~\eqref{eq:runs} is a contingent decision
+        (``$y_p$ only if some $x_{sp}$'').
+  \item[\eqref{eq:fixed} Fixed assignments.] Administrative locks hold in
+        every solution and every alternative.
+  \item[\eqref{eq:mand} Mandatory skills.] A running project must include
+        at least one student who meets each mandatory level. This is a
+        set-covering constraint~\cite[Ch.~12]{ior}: the qualified students
+        ``cover'' the requirement. Multiplying by $y_p$ means that a project
+        with $l_p = 0$ may stay empty instead of requiring an expert. We
+        interpret ``mandatory'' at team level (at least one qualified member);
+        the stricter reading, every member qualified, would instead set
+        $x_{sp} = 0$ for every unqualified student.
+  \item[\eqref{eq:nogood} No-good cuts.] If every student kept the project
+        they had in an earlier solution $A$, the left-hand side would equal
+        $n$. Requiring at most $n - 1$ forces at least one student to move, so
+        each new solution is distinct from all earlier ones. The constraint
+        has the same structure as subtour elimination in the travelling
+        salesman problem: it removes unwanted integer solutions and leaves all
+        others feasible.
+\end{description}
+
+\subsection{Objectives: three strategies}
+\label{sec:obj}
+
+Each strategy is a subclass of \code{AssignmentStrategy} (Strategy pattern)
+and differs only in its objective.
+
+\paragraph{Strategy 1: preference-oriented (\code{PREFERENCE}).}
+Minimise the total assigned rank; skill fit only breaks ties:
+\begin{equation}
+  \max \; Z_{\text{pref}} = \sum_{s \in S} \sum_{p \in P}
+    \bigl(-r_{sp} + \varepsilon\, \sigma_{sp}\bigr)\, x_{sp}.
+  \label{eq:zpref}
+\end{equation}
+Total rank changes in integer steps, while the tie-break term is at most
+$\varepsilon n = 0.01$ for the demo cohort, so it can never outweigh one rank
+step as long as $n < 1/\varepsilon = 1000$.
+
+\paragraph{Strategy 2: skill-fit-oriented (\code{SKILL\_FIT}).}
+Maximise total skill fit; preferences only break ties:
+\begin{equation}
+  \max \; Z_{\text{skill}} = \sum_{s \in S} \sum_{p \in P}
+    \bigl(\sigma_{sp} + \varepsilon\, u_{sp}\bigr)\, x_{sp}.
+  \label{eq:zskill}
+\end{equation}
+
+\paragraph{Strategy 3: balanced trade-off (\code{BALANCED}).}
+A two-stage (lexicographic) objective. Stage~1 is a minimax problem, like the
+districting problem in which the largest deviation is made as small as
+possible: it finds the smallest achievable worst rank $z^*$ among students
+without a fixed assignment,
+\begin{equation}
+  z^* = \min \; z \quad \text{s.t.} \quad
+  z \ge r_{sp}\, x_{sp} \;\; \forall s \in S \setminus S_F,\ p \in P,
+  \quad \eqref{eq:one}\text{--}\eqref{eq:nogood}.
+  \label{eq:stage1}
+\end{equation}
+Fixed students are excluded because their rank is not a choice the model can
+improve. Stage~2 keeps that guarantee and maximises an equal blend of
+preference score and skill fit:
+\begin{equation}
+  \max \; Z_{\text{bal}} = \sum_{s \in S} \sum_{p \in P}
+    \Bigl(\tfrac12\, u_{sp} + \tfrac12\, \sigma_{sp}\Bigr) x_{sp}
+  \quad \text{s.t.} \quad
+  x_{sp} = 0 \;\; \forall s \notin S_F,\ p : r_{sp} > z^*,
+  \quad \eqref{eq:one}\text{--}\eqref{eq:nogood}.
+  \label{eq:stage2}
+\end{equation}
+
+\subsection{Generating distinct alternatives}
+
+\code{AssignmentEngine.generate\_alternatives} produces up to $K$ alternatives
+(default $K = 3$):
+\begin{enumerate}
+  \item Alternative 1 uses the strategy the user selected; alternatives 2 and
+        3 use the two other strategies, so each alternative favours a
+        different criterion.
+  \item Each solve includes a no-good cut~\eqref{eq:nogood} for every earlier
+        solution, so all alternatives are pairwise distinct.
+  \item The constraints are the same for every strategy, so if one solve is
+        infeasible, no further distinct assignment exists. Generation then
+        stops and reports the number found (\code{distinct\_alternatives}).
+        It never fabricates duplicates.
+  \item If the first solve is infeasible, the run is reported as
+        \code{INFEASIBLE} with no solutions.
+\end{enumerate}
+
+\section{Evaluation indicators}
+\label{sec:ind}
+
+Let $p(s)$ be the project assigned to student $s$ in a solution, and
+$\tilde r_s = r_{s\,p(s)}$ its rank (with $m+1$ for an unranked project). All
+indicators are computed from the solution itself, independently of the solver.
+
+\subsection{Feasibility}
+The solution is re-checked against every hard constraint, so that a solver or
+data error cannot pass unnoticed:
+\begin{itemize}
+  \item completeness: $\sum_{s,p} x_{sp} = n$, each student exactly once;
+  \item capacity compliance: $l_p \le \sum_s x_{sp} \le u_p$ for every $p$;
+  \item fixed-assignment adherence: $x_{sp} = 1$ for every $(s,p) \in F$;
+  \item mandatory coverage: every running project has at least one qualified
+        student for each $k \in M_p$.
+\end{itemize}
+Any violation is listed by name and marks the solution as infeasible.
+
+\subsection{Efficiency}
+\begin{itemize}
+  \item \textbf{Mean skill fit}, our main efficiency measure:
+        $\bar\sigma = \frac1n \sum_{s \in S} \sigma_{s\,p(s)} \in [0,1]$.
+        It answers ``how well, on average, do students meet the levels their
+        projects ask for?''. 1 means every requirement is fully met.
+  \item \textbf{Unmet desired requirements}:
+        $U_{\text{soft}} = \bigl|\{(s,k) : k \in K_{p(s)} \setminus M_{p(s)},\
+        \lambda_{sk} < L_{p(s)k}\}\bigr|$, the number of desired (non-mandatory)
+        skill gaps, which shows \emph{where} skill fit is lost.
+  \item \textbf{Mean preference rank}:
+        $\bar r = \frac1n \sum_{s \in S} \tilde r_s$, where lower is better.
+\end{itemize}
+
+\subsection{Fairness}
+Aggregate performance is not enough, so we report how outcomes are
+distributed:
+\begin{enumerate}
+  \item \textbf{Rank distribution}: $c_k = |\{s : \tilde r_s = k\}|$ for
+        $k = 1,\dots,m$, plus $c_{\text{unranked}}$.
+  \item \textbf{Students outside their preferences}:
+        $U = |\{s : p(s) \text{ not ranked by } s\}|$.
+  \item \textbf{Worst individual outcome}: $r_{\max} = \max_{s \in S} \tilde r_s$.
+  \item \textbf{Our proposed indicator: the Gini coefficient of ranks},
+        \begin{equation}
+          G = \frac{\sum_{i \in S} \sum_{j \in S} |\tilde r_i - \tilde r_j|}
+                   {2\, n \sum_{i \in S} \tilde r_i} \in [0, 1).
+          \label{eq:gini}
+        \end{equation}
+        \emph{Justification.} $\bar r$ and $r_{\max}$ do not show whether
+        disappointment is spread evenly or concentrated on a few students.
+        $G$ does: it is 0 when every student receives the same rank, and
+        grows as outcomes become more unequal. For ranks $(1,1,1,4)$, the mean
+        rank is 1.75 and $G = 0.32$; for $(2,2,2,2)$ the mean rank is worse,
+        2.00, but $G = 0$. Showing both lets the decision-maker see the
+        efficiency--equity trade-off directly.
+        \emph{Interpretation.} Because a low rank is good, a high $G$ means
+        unequal \emph{disappointment}, not unequal wealth. $G$ measures
+        spread, not level: ranks $(3,3,3,3)$ also give $G = 0$, so it is
+        always reported together with $\bar r$ and $r_{\max}$.
+        The rank variance $\frac1n \sum_s (\tilde r_s - \bar r)^2$ is
+        reported as a supporting measure.
+\end{enumerate}
+
+\subsection{Capacity utilisation}
+\begin{equation*}
+  \text{Util}_p = \frac{\sum_{s} x_{sp}}{u_p} \times 100\%,
+  \qquad
+  \text{Util} = \frac{n}{\sum_{p} u_p} \times 100\%.
+\end{equation*}
+Projects at their minimum or maximum are flagged, since they leave no slack
+when the situation changes.
+
+\section{Trade-off analysis and solution comparison}
+
+\subsection{Comparative deltas}
+For a baseline solution $A$ and an alternative $B$, each indicator is reported
+as a difference $B - A$:
+\begin{equation*}
+  \Delta\bar\sigma = \bar\sigma_B - \bar\sigma_A, \quad
+  \Delta\bar r = \bar r_B - \bar r_A, \quad
+  \Delta r_{\max} = r_{\max,B} - r_{\max,A}, \quad
+  \Delta G = G_B - G_A.
+\end{equation*}
+A positive $\Delta\bar\sigma$ is an improvement; positive $\Delta\bar r$,
+$\Delta r_{\max}$ and $\Delta G$ are deteriorations.
+
+\subsection{Who is affected}
+\begin{itemize}
+  \item Changed assignments: $C = \{(s, p_A(s), p_B(s)) : p_A(s) \neq p_B(s)\}$;
+        $|C| \ge 1$ for distinct alternatives.
+  \item Worsened students: $\tilde r^B_s > \tilde r^A_s$; improved students:
+        $\tilde r^B_s < \tilde r^A_s$.
+\end{itemize}
+This answers the brief's questions: what improves, what becomes worse, and who
+is affected.
+
+\subsection{Dominance}
+Alternative $B$ is \emph{dominated} by $A$ if $A$ is at least as good on mean
+rank and mean skill fit and strictly better on at least one
+($\bar r_A \le \bar r_B$, $\bar\sigma_A \ge \bar\sigma_B$, not both equal).
+A dominated alternative offers no real trade-off. Each strategy's optimum is
+Pareto-optimal for its own criterion, but no-good cuts only guarantee
+distinctness, so a later alternative can be dominated. Dominated alternatives
+are therefore flagged: the engine adds a warning and the numbers of the
+dominating alternatives (\code{diagnostics["dominated\_by"]}) to the
+solution, and the comparison summary states that there is no real trade-off.
+
+\subsection{Illustrative results}
+
+\begin{table}[!htbp]
+\centering
+\caption{Standard demo cohort: 10 students, 4 projects with capacity 1--3
+         (44 binary variables, each solve $< 0.1$\,s).}
+\label{tab:std}
+\begin{tabular}{lcccccccc}
+\toprule
+Alternative & $\bar r$ & $r_{\max}$ & $c_1$ & $U$ & $G$ & $\bar\sigma$ & $U_{\text{soft}}$ & Moved\\
+\midrule
+1 \code{PREFERENCE} & 1.00 & 1 & 10 & 0 & 0.000 & 0.983 & 1 & --\\
+2 \code{SKILL\_FIT}  & 1.10 & 2 &  9 & 0 & 0.082 & 1.000 & 0 & 1 vs.\ alt.~1\\
+3 \code{BALANCED}   & 1.10 & 2 &  9 & 0 & 0.082 & 0.983 & 1 & 2 vs.\ alt.~2\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:std} shows a clean trade-off between alternatives 1 and 2:
+moving a single student (S06) to their second choice raises mean skill fit
+from 0.983 to 1.000 and removes the only unmet desired requirement. Alternative
+3 is dominated by both: it has a worse mean rank than alternative 1 at the same
+skill fit, and the same mean rank as alternative 2 at a lower skill fit. The
+engine therefore attaches the warning ``Dominated by alternatives 1 and 2''. Because alternative 1 already gives everyone a
+first choice, the balanced strategy cannot improve the worst rank in this
+cohort; it only becomes a different alternative because of the no-good cuts.
+
+\begin{table}[!htbp]
+\centering
+\caption{Fixed-assignment scenario: S02 is locked to P2, their third choice.}
+\label{tab:fixed}
+\begin{tabular}{lcccccc}
+\toprule
+Alternative & $\bar r$ & $r_{\max}$ & $c_1/c_2/c_3$ & $G$ & $\bar\sigma$ & $U_{\text{soft}}$\\
+\midrule
+1 \code{PREFERENCE} & 1.20 & 3 & 9/0/1 & 0.150 & 0.967 & 2\\
+2 \code{SKILL\_FIT}  & 1.30 & 3 & 8/1/1 & 0.192 & 0.983 & 1\\
+3 \code{BALANCED}   & 1.30 & 3 & 8/1/1 & 0.192 & 0.967 & 2\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+In Table~\ref{tab:fixed} the lock holds in every alternative, and its cost is
+visible: compared with Table~\ref{tab:std}, mean rank rises from 1.00 to 1.20
+and the worst rank is 3, caused entirely by the fixed student.
+
+The demo cohort is too easy to show the balanced strategy at work. In a
+4-student, 4-project example with one seat per project (preferences
+S1, S2: D,C,A,B; S3: A,C,B,D; S4: C,A,D,B), \code{PREFERENCE} reaches the
+lowest total rank, 7 ($\bar r = 1.75$), by giving S2 their fourth choice
+($r_{\max} = 4$, $G = 0.32$). \code{BALANCED} accepts a higher total of 8
+($\bar r = 2.00$) to guarantee everyone their third choice or better
+($r_{\max} = 3$, $G = 0.19$). This is precisely the trade-off the brief
+describes: protecting the worst-off student reduces average quality.
+
+\section{Transparent recommendation rules}
+
+Recommendations are generated in \code{app/engine/recommendations.py} for each
+policy priority separately. Each recommendation lists the criteria used, the
+calculated evidence (indicator values) and the advice, so that calculated
+facts are kept apart from normative judgement.
+
+\begin{table}[!htbp]
+\centering
+\small
+\caption{Recommendation rules. Criteria are applied lexicographically: the
+         second criterion only decides between alternatives tied on the
+         first.}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{3.1cm}LL}
+\toprule
+Policy priority & Selection criterion (lexicographic) & Advice and trade-off warning\\
+\midrule
+1. Student preference maximisation
+  & minimise $U$, then $\bar r$, then $r_{\max}$
+  & Adopt when satisfaction and few appeals matter most; may give projects
+    weaker skill coverage.\\
+2. Project skill quality and delivery
+  & maximise $\bar\sigma$, then minimise $U_{\text{soft}}$
+  & Adopt when partners demand strong technical capability; some students
+    receive lower-ranked projects.\\
+3. Balanced and egalitarian
+  & minimise $G$, then rank variance, then $\bar r$
+  & Adopt to avoid concentrating disappointment on a few students; may
+    lower average satisfaction.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+When several alternatives tie on all criteria, the one with the lowest
+alternative number is recommended. The same alternative can be recommended
+under more than one priority; this is shown rather than hidden, because it
+tells the decision-maker that the priorities do not conflict for this cohort.
+
+\section{Assumptions, boundary conditions and edge cases}
+
+\paragraph{Assumptions.}
+\begin{enumerate}
+  \item \textbf{Unranked projects} are allowed but cost rank $m + 1$, worse
+        than any ranked project, and are counted in $U$.
+  \item \textbf{Ranks are evenly spaced}: the step from first to second
+        choice weighs the same as from second to third.
+  \item \textbf{Skill levels} are taken at face value; missing skills count
+        as level 0. A project with no requirements has fit 1.
+  \item \textbf{Mandatory skills} are met at team level (at least one
+        qualified member), pending the instructor's confirmation.
+  \item \textbf{Ties} between students with identical preferences are broken
+        by the secondary goal ($\varepsilon$ term) and then by the solver; the
+        result is a valid optimum, not a judgement about which student
+        deserves the seat.
+\end{enumerate}
+
+\paragraph{Handling of edge cases.}
+Every case in the brief has a defined outcome; none may end in an unexplained
+crash. Input validation (\code{app/domain/validation.py}) runs before the
+solver.
+
+\begin{table}[!htbp]
+\centering
+\small
+\caption{Edge cases and the system's response.}
+\label{tab:edge}
+\begin{tabularx}{\textwidth}{>{\raggedright\arraybackslash}p{5.4cm}>{\raggedright\arraybackslash}p{2.3cm}L}
+\toprule
+Case & Outcome & Behaviour\\
+\midrule
+Empty cohort or catalogue; duplicate or unknown identifiers; invalid
+  capacities ($u_p \le 0$, $l_p < 0$, $l_p > u_p$)
+  & Reject & Named validation error; the solver is not run.\\
+Contradictory fixed assignments (one student fixed twice)
+  & Reject & Named validation error.\\
+Incomplete, duplicate or tied preferences; no preferences
+  & Warn & Run proceeds; unranked projects cost $m+1$.\\
+Uncatalogued skill in a profile or requirement
+  & Warn & Run proceeds; the skill counts only where defined.\\
+Missing skills; project without requirements
+  & Accept & Fit 0 or 1 respectively (equation~\eqref{eq:fit}).\\
+$\sum_p u_p < n$; $\sum_p l_p > n$; more fixed students than $u_p$;
+  a mandatory skill no student has
+  & Infeasible & Proven before solving, with the reason stated.\\
+Infeasibility arising only from combinations (e.g.\ two projects each need
+  the single qualified student)
+  & Infeasible & Proven by the solver; status \code{INFEASIBLE}, no
+    solutions.\\
+Only one (or fewer than $K$) feasible solutions
+  & Partial & The solutions found are returned; the stop reason states that
+    no further distinct solution exists.\\
+Duplicate alternatives
+  & Prevented & Impossible by construction (no-good cuts).\\
+Equal aggregate scores
+  & Accept & Tie-break term; in recommendations the lowest alternative number wins.\\
+Solver time limit (15\,s) or database failure
+  & Fail & Run status \code{NOT\_SOLVED}/\code{FAILED} with diagnostics.\\
+\bottomrule
+\end{tabularx}
+\end{table}
+
+\paragraph{Feasibility boundaries.}
+The problem is provably infeasible if $\sum_p u_p < n$, if
+$\sum_p l_p > n$, if any project has more fixed students than $u_p$, or if a
+mandatory level is held by no student in the cohort. Validation detects these
+directly. Validation is deliberately conservative: it treats the last case as
+infeasible even when the project has $l_p = 0$ and could stay empty under
+constraint~\eqref{eq:mand}. All other infeasibility, which arises from
+combinations of constraints, is proven by the solver.
+
+\section{Limitations}
+
+\begin{enumerate}
+  \item \textbf{Computational complexity.} Integer programming is NP-hard in
+        general, and the number of binary variables grows as $n \cdot m$. At
+        realistic cohort sizes the model remains small, but we have only
+        measured solve times on the demo cohorts.
+  \item \textbf{Linear preferences.} Evenly spaced ranks assume that a
+        student is as disappointed moving from first to second choice as
+        from second to third, which need not hold.
+  \item \textbf{Individual, not team, skill fit.} $\sigma_{sp}$ is measured
+        per student. The model does not capture complementary skills, team
+        diversity or personal compatibility.
+  \item \textbf{Weights and tie-breaks are judgements.} The $\tfrac12/\tfrac12$
+        blend in \code{BALANCED} is a choice, not a fact. In
+        \code{SKILL\_FIT} the tie-break term can outweigh very small
+        differences in total skill fit (below $\varepsilon n$), and stage~2 of
+        \code{BALANCED} has no tie-break, so the solver chooses between
+        equally good assignments. We have not run a sensitivity analysis on
+        these parameters~\cite[Ch.~7]{ior}.
+  \item \textbf{Alternatives are distinct, not necessarily efficient.} No-good
+        cuts guarantee that alternatives differ, not that they are
+        Pareto-optimal. Dominated alternatives are flagged
+        (Table~\ref{tab:std}) but still generated.
+  \item \textbf{Static, self-reported data.} The model assumes the input data
+        are correct and fixed. Self-reported skill levels may be inaccurate,
+        and mid-semester changes require a new run.
+\end{enumerate}
+
+\begin{thebibliography}{9}
+\bibitem{rezaeinia2022}
+N.~Rezaeinia, J.~C. G\'oez and M.~Guajardo.
+\newblock Efficiency and fairness criteria in the assignment of students to
+  projects.
+\newblock \emph{Annals of Operations Research}, 319(2):1717--1735, 2022.
+\newblock \url{https://doi.org/10.1007/s10479-021-04001-7}
+
+\bibitem{ior}
+F.~S. Hillier and G.~J. Lieberman.
+\newblock \emph{Introduction to Operations Research}.
+\newblock McGraw-Hill. Chapters 7 (sensitivity analysis), 9.3 (the
+  assignment problem) and 12 (integer programming), as covered in TECH4
+  Mathematics for Decisions, NHH, autumn 2025.
+
+\bibitem{pyomo}
+M.~L. Bynum, G.~A. Hackebeil, W.~E. Hart, C.~D. Laird, B.~L. Nicholson,
+  J.~D. Siirola, J.-P. Watson and D.~L. Woodruff.
+\newblock \emph{Pyomo: Optimization Modeling in Python}, 3rd edition.
+\newblock Springer, 2021.
+
+\bibitem{highs}
+Q.~Huangfu and J.~A.~J. Hall.
+\newblock Parallelizing the dual revised simplex method.
+\newblock \emph{Mathematical Programming Computation}, 10(1):119--142, 2018.
+\end{thebibliography}
+
+\end{document}
