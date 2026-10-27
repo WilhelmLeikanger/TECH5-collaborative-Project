@@ -965,11 +965,7 @@ def compare_solutions() -> Any:
     Renders side-by-side comparative analysis of two solutions.
     """
     run_repo = repositories.RunRepository()
-
-    all_solutions = []
-    for run in run_repo.list_runs():
-        for solution in run.solutions:
-            all_solutions.append(solution)
+    runs = run_repo.list_runs()
 
     sol1 = flask.request.args.get("sol1")
     sol2 = flask.request.args.get("sol2")
@@ -1000,7 +996,7 @@ def compare_solutions() -> Any:
 
     return flask.render_template(
         "compare.html",
-        all_solutions=all_solutions,
+        runs=runs,
         sol_a=sol_a,
         sol_b=sol_b,
         comparison=comparison,
