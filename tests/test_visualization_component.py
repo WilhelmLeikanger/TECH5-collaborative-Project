@@ -251,3 +251,64 @@ def test_compare_solutions_view(tmp_path: pathlib.Path) -> None:
     assert res.status_code == 200
     assert b"Baseline solution (A) could not be found." in res.data
     assert b"Comparison solution (B) could not be found." in res.data
+
+
+def test_solution_page_fairness_section(tmp_path: pathlib.Path) -> None:
+    """Verifies the fairness section names students outside preferences."""
+    db_file = tmp_path / "test_fairness.db"
+    app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
+    client = app.test_client()
+
+    # P1 has one seat and P2 two; all three students want only P1.
+    # Two of them must end up on P2, a project they did not rank.
+    with app.app_context():
+        proj_repo = repositories.ProjectRepository()
+        proj_repo.save(
+            models.Project(
+                id="P1", title="Popular", min_capacity=0, max_capacity=1
+            )
+        )
+        proj_repo.save(
+            models.Project(
+                id="P2", title="Spare", min_capacity=0, max_capacity=2
+            )
+        )
+        stud_repo = repositories.StudentRepository()
+        for sid in ("S1", "S2", "S3"):
+            stud_repo.save(
+                models.Student(
+                    id=sid,
+                    display_name=f"Student {sid}",
+                    preferences=[
+                        models.Preference(
+                            student_id=sid, project_id="P1", rank=1
+                        )
+                    ],
+                )
+            )
+
+    client.post(
+        "/runs/trigger",
+        data={"primary_strategy": "PREFERENCE", "max_alternatives": 1},
+        follow_redirects=True,
+    )
+    with app.app_context():
+        run_repo = repositories.RunRepository()
+        run = run_repo.list_runs(limit=1)[0]
+        assert run.status == "COMPLETED"
+        sol = run_repo.get_solution(run.solutions[0].id)
+
+    res = client.get(f"/solutions/{sol.id}")
+    assert res.status_code == 200
+    html = res.data.decode()
+
+    assert "Fairness: How Outcomes Are Spread" in html
+    assert "Distribution of assigned preference ranks" in html
+    assert "Gini coefficient" in html
+    # Two students landed outside their preferences and must be named.
+    assert "got a project they did not rank" in html
+    unranked = [a for a in sol.assignments if a.preference_rank is None]
+    assert len(unranked) == 2
+    for asg in unranked:
+        assert f"Student {asg.student_id}" in html
+    assert "Not ranked" in html
