@@ -873,6 +873,15 @@ def view_run(run_id: str) -> Any:
     )
 
 
+_ORDINAL_SUFFIX = {1: "st", 2: "nd", 3: "rd"}
+_RANK_TONE = {1: "success", 2: "primary"}
+
+
+def _pct(count: int, total: int) -> float:
+    """Returns count as a percentage of total, rounded to one decimal."""
+    return round(100.0 * count / total, 1) if total else 0.0
+
+
 def _describe_gini(gini: float) -> str:
     """Turns a rank Gini coefficient into a plain-language reading."""
     if gini < 0.1:
@@ -923,10 +932,10 @@ def _build_fairness_summary(
         count = sum(r == rank for r in ranked)
         bars.append(
             {
-                "label": f"{rank}{'st' if rank == 1 else 'nd' if rank == 2 else 'rd' if rank == 3 else 'th'} choice",
+                "label": f"{rank}{_ORDINAL_SUFFIX.get(rank, 'th')} choice",
                 "count": count,
-                "pct": round(100.0 * count / total, 1) if total else 0.0,
-                "tone": "success" if rank == 1 else "primary" if rank == 2 else "warning",
+                "pct": _pct(count, total),
+                "tone": _RANK_TONE.get(rank, "warning"),
             }
         )
     unranked = [a for a in assignments if a.preference_rank is None]
@@ -935,7 +944,7 @@ def _build_fairness_summary(
             {
                 "label": "Not ranked",
                 "count": len(unranked),
-                "pct": round(100.0 * len(unranked) / total, 1) if total else 0.0,
+                "pct": _pct(len(unranked), total),
                 "tone": "danger",
             }
         )
@@ -944,11 +953,8 @@ def _build_fairness_summary(
     outside = []
     for asg in unranked:
         stud = students.get(asg.student_id)
-        wanted = (
-            [_title(p.project_id) for p in sorted(stud.preferences, key=lambda p: p.rank)]
-            if stud
-            else []
-        )
+        prefs = sorted(stud.preferences, key=lambda p: p.rank) if stud else []
+        wanted = [_title(p.project_id) for p in prefs]
         outside.append(
             {
                 "student_id": asg.student_id,
@@ -975,7 +981,8 @@ def _build_fairness_summary(
         stud = students.get(asg.student_id)
         first = None
         if stud and stud.preferences:
-            first = _title(min(stud.preferences, key=lambda p: p.rank).project_id)
+            top = min(stud.preferences, key=lambda p: p.rank)
+            first = _title(top.project_id)
         worst.append(
             {
                 "student_id": asg.student_id,
@@ -996,7 +1003,8 @@ def _build_fairness_summary(
         headline = "No students were assigned in this solution."
     else:
         headline = (
-            f"{top_two} of {total} students received their first or second choice."
+            f"{top_two} of {total} students received their first or second "
+            "choice."
         )
         if unranked:
             names = ", ".join(_name(a.student_id) for a in unranked[:3])
@@ -1007,8 +1015,8 @@ def _build_fairness_summary(
             )
         elif worst_group and max_rank > 2:
             headline += (
-                f" The least satisfied {'student' if len(worst_group) == 1 else 'students'}"
-                f" {worst_label}."
+                f" The least satisfied student"
+                f"{'' if len(worst_group) == 1 else 's'} {worst_label}."
             )
 
     return {

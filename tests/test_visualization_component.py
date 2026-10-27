@@ -252,25 +252,38 @@ def test_compare_solutions_view(tmp_path: pathlib.Path) -> None:
     assert b"Baseline solution (A) could not be found." in res.data
     assert b"Comparison solution (B) could not be found." in res.data
 
+
 def test_solution_page_fairness_section(tmp_path: pathlib.Path) -> None:
-    """Verifies the fairness section names affected students (Team A, week 2)."""
+    """Verifies the fairness section names students outside preferences."""
     db_file = tmp_path / "test_fairness.db"
     app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
     client = app.test_client()
 
-    # Two projects with one seat each, three students who all want P1 only.
-    # Someone must end up on P2, a project they did not rank.
+    # P1 has one seat and P2 two; all three students want only P1.
+    # Two of them must end up on P2, a project they did not rank.
     with app.app_context():
         proj_repo = repositories.ProjectRepository()
-        proj_repo.save(models.Project(id="P1", title="Popular", min_capacity=0, max_capacity=1))
-        proj_repo.save(models.Project(id="P2", title="Spare", min_capacity=0, max_capacity=2))
+        proj_repo.save(
+            models.Project(
+                id="P1", title="Popular", min_capacity=0, max_capacity=1
+            )
+        )
+        proj_repo.save(
+            models.Project(
+                id="P2", title="Spare", min_capacity=0, max_capacity=2
+            )
+        )
         stud_repo = repositories.StudentRepository()
         for sid in ("S1", "S2", "S3"):
             stud_repo.save(
                 models.Student(
                     id=sid,
                     display_name=f"Student {sid}",
-                    preferences=[models.Preference(student_id=sid, project_id="P1", rank=1)],
+                    preferences=[
+                        models.Preference(
+                            student_id=sid, project_id="P1", rank=1
+                        )
+                    ],
                 )
             )
 
