@@ -19,10 +19,14 @@
       <div style="flex: 1; min-width: 250px;">
         <label class="form-label" for="sol1">Baseline Solution (A):</label>
         <select name="sol1" id="sol1" class="form-control">
-          {% for s in all_solutions %}
-            <option value="{{ s.id }}" {% if sol_a and sol_a.id == s.id %}selected{% endif %}>
-              Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }} (Run: {{ s.run_id[:8] }})
-            </option>
+          {% for run in runs %}
+            <optgroup label="Run {{ run.id[:8] }} &ndash; {{ run.created_at[:19].replace('T', ' ') }}">
+              {% for s in run.solutions %}
+                <option value="{{ s.id }}" {% if sol_a and sol_a.id == s.id %}selected{% endif %}>
+                  Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }}
+                </option>
+              {% endfor %}
+            </optgroup>
           {% endfor %}
         </select>
       </div>
@@ -30,10 +34,14 @@
       <div style="flex: 1; min-width: 250px;">
         <label class="form-label" for="sol2">Comparison Solution (B):</label>
         <select name="sol2" id="sol2" class="form-control">
-          {% for s in all_solutions %}
-            <option value="{{ s.id }}" {% if sol_b and sol_b.id == s.id %}selected{% endif %}>
-              Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }} (Run: {{ s.run_id[:8] }})
-            </option>
+          {% for run in runs %}
+            <optgroup label="Run {{ run.id[:8] }} &ndash; {{ run.created_at[:19].replace('T', ' ') }}">
+              {% for s in run.solutions %}
+                <option value="{{ s.id }}" {% if sol_b and sol_b.id == s.id %}selected{% endif %}>
+                  Alt #{{ s.alternative_number }} &ndash; {{ s.strategy_name }}
+                </option>
+              {% endfor %}
+            </optgroup>
           {% endfor %}
         </select>
       </div>
@@ -42,14 +50,6 @@
         Compare Allocations &rarr;
       </button>
     </form>
-
-    <!-- TODO (Team A): Implement Side-by-Side Solution Comparison -->
-    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
-      <strong>Team A Starter Carcass:</strong>
-      Implement the comparative analysis view below using the <code>RunComparison</code> DTO.
-      Display comparative delta metrics (skill fit, preference rank, Gini), trade-off findings,
-      and the table of changed student allocations between Solution A and Solution B.
-    </div>
 
     {% if comparison and sol_a and sol_b %}
       <!-- Comparative KPI Deltas -->
