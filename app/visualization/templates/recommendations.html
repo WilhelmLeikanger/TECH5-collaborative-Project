@@ -16,6 +16,27 @@
 </div>
 
 {% if recommendations %}
+  {% if run.solutions|length == 1 %}
+    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
+      <strong>Only one feasible solution was found.</strong>
+      There are no alternatives to choose between, so the recommendation below applies under every priority.
+    </div>
+  {% else %}
+    <div class="alert alert-info" style="margin-bottom: 1.5rem;">
+      <strong>Summary:</strong>
+      {% for alt, count in summary -%}
+        {% if loop.first %}Alternative {{ alt }} is recommended under {{ count }} of {{ recommendations|length }} priorities{% else %}; Alternative {{ alt }} under {{ count }}{% endif %}
+      {%- endfor %}.
+    </div>
+  {% endif %}
+
+  {% for s in run.solutions if s.diagnostics.get('dominated_by') %}
+    <div class="alert alert-warning" style="margin-bottom: 1rem;">
+      <strong>Alternative {{ s.alternative_number }} is dominated</strong>
+      by Alternative{% if s.diagnostics['dominated_by']|length > 1 %}s{% endif %} {{ s.diagnostics['dominated_by']|join(' and ') }}: at least as good on mean rank and mean skill fit and better on one of them, so it offers no real trade-off.
+    </div>
+  {% endfor %}
+
   <div style="display: flex; flex-direction: column; gap: 1.5rem;">
     {% for rec in recommendations %}
       <div class="card" style="margin-bottom: 0; border-left: 5px solid {% if loop.index == 1 %}var(--success){% elif loop.index == 2 %}var(--primary){% else %}#475569{% endif %};">
@@ -72,6 +93,50 @@
               </div>
             </div>
           </div>
+
+          {# Each other alternative (before) vs the recommendation (after) #}
+          {% for cmp in comparisons[rec.recommended_solution_id] %}
+            <div style="margin-top: 1.25rem;">
+              <h3 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 0.5rem;">
+                If you choose Alternative {{ cmp.solution_b_alt }} instead of Alternative {{ cmp.solution_a_alt }}
+              </h3>
+              {% if cmp.changed_students_count == 0 %}
+                <p style="font-size: 0.9rem; color: var(--text-muted);">Both alternatives assign every student identically.</p>
+              {% else %}
+                <p style="font-size: 0.9rem; margin-bottom: 0.25rem;">
+                  {% if cmp.improves %}<span class="text-success"><strong>Improves:</strong> {{ cmp.improves|join(', ') }}.</span>{% endif %}
+                  {% if cmp.worsens %}<span class="text-danger"><strong>Gets worse:</strong> {{ cmp.worsens|join(', ') }}.</span>{% endif %}
+                  {% if not cmp.improves and not cmp.worsens %}The summary metrics are unchanged.{% endif %}
+                </p>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem;">
+                  {{ cmp.changed_students_count }} of {{ cmp.total_students }} students change project:
+                  {{ cmp.rank_improved_count }} better off, {{ cmp.rank_worsened_count }} worse off.
+                </p>
+                <div class="table-responsive">
+                  <table class="data-table">
+                    <thead>
+                      <tr>
+                        <th>Student</th>
+                        <th>From</th>
+                        <th>To</th>
+                        <th>Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {% for c in cmp.changed_assignments %}
+                        <tr>
+                          <td>{{ students[c.student_id].display_name if c.student_id in students else c.student_id }}</td>
+                          <td>{{ projects[c.project_a_id].title if c.project_a_id in projects else c.project_a_id }}</td>
+                          <td>{{ projects[c.project_b_id].title if c.project_b_id in projects else c.project_b_id }}</td>
+                          <td class="{% if c.rank_change == 'IMPROVED' %}text-success{% elif c.rank_change == 'WORSENED' %}text-danger{% endif %}">{{ c.change }}</td>
+                        </tr>
+                      {% endfor %}
+                    </tbody>
+                  </table>
+                </div>
+              {% endif %}
+            </div>
+          {% endfor %}
         </div>
       </div>
     {% endfor %}
