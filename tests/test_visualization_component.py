@@ -1,6 +1,7 @@
 """Tests for Component A (Visualization & Recommendation) web workflows."""
 
 import pathlib
+import re
 
 import pytest
 
@@ -312,3 +313,84 @@ def test_solution_page_fairness_section(tmp_path: pathlib.Path) -> None:
     for asg in unranked:
         assert f"Student {asg.student_id}" in html
     assert "Not ranked" in html
+
+
+def test_recommendations_single_solution(tmp_path: pathlib.Path) -> None:
+    """Verifies a one-solution run shows one card and no comparison."""
+    db_file = tmp_path / "test_recs_single.db"
+    app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
+    client = app.test_client()
+
+    client.post("/load-scenario/standard", follow_redirects=True)
+    client.post(
+        "/runs/trigger",
+        data={"primary_strategy": "PREFERENCE", "max_alternatives": 1},
+        follow_redirects=True,
+    )
+    with app.app_context():
+        run = repositories.RunRepository().list_runs(limit=1)[0]
+    assert len(run.solutions) == 1
+
+    res = client.get(f"/recommendations/{run.id}")
+    assert res.status_code == 200
+    html = res.data.decode()
+
+    assert "Only one feasible solution was found." in html
+    assert html.count("Recommended: Solution Alternative #") == 1
+    assert "If you choose Alternative" not in html
+    assert "Summary:" not in html
+
+
+def test_recommendations_show_affected_students(
+    tmp_path: pathlib.Path,
+) -> None:
+    """Verifies the page names students who change project."""
+    db_file = tmp_path / "test_recs_affected.db"
+    app = create_app({"TESTING": True, "DATABASE_PATH": db_file})
+    client = app.test_client()
+
+    client.post("/load-scenario/standard", follow_redirects=True)
+    client.post(
+        "/runs/trigger",
+        data={"primary_strategy": "PREFERENCE", "max_alternatives": 3},
+        follow_redirects=True,
+    )
+    with app.app_context():
+        run_repo = repositories.RunRepository()
+        # get_run loads assignments; list_runs only loads solution metadata.
+        run = run_repo.get_run(run_repo.list_runs(limit=1)[0].id)
+        students = {
+            s.id: s.display_name
+            for s in repositories.StudentRepository().list_all()
+        }
+    assert len(run.solutions) >= 2
+
+    res = client.get(f"/recommendations/{run.id}")
+    assert res.status_code == 200
+    html = res.data.decode()
+
+    assert "is recommended under" in html
+    assert "If you choose Alternative" in html
+    assert "choice →" in html
+    # Dominated alternatives get a warning, not a comparison section.
+    for sol in run.solutions:
+        if sol.diagnostics.get("dominated_by"):
+            n = sol.alternative_number
+            assert f"Alternative {n} is dominated" in html
+            assert not re.search(rf"instead of Alternative {n}\s*</h3>", html)
+    # Alternatives are distinct, so some student must change project
+    # between alternatives 1 and 2, and must be named on the page.
+    sol_1, sol_2 = run.solutions[0], run.solutions[1]
+    assert not sol_1.diagnostics.get("dominated_by")
+    assert not sol_2.diagnostics.get("dominated_by")
+    projects_2 = {a.student_id: a.project_id for a in sol_2.assignments}
+    moved = [
+        a.student_id
+        for a in sol_1.assignments
+        if projects_2.get(a.student_id) != a.project_id
+    ]
+    assert moved
+    for student_id in moved:
+        assert students[student_id] in html
+    assert "better off" in html
+    assert "worse off" in html

@@ -165,9 +165,9 @@ def generate_recommendations(
             recommended_solution_id=best_balanced_sol.id,
             recommended_alternative_number=best_balanced_sol.alternative_number,
             criteria_used=[
-                "Rank Gini coefficient (equality of outcome distribution)",
-                "Rank variance across students",
-                "Harmonized score between preference rank and skill fit",
+                "Rank Gini coefficient (lower is more equal)",
+                "Rank variance across students (tie-breaker, lower is better)",
+                "Mean preference rank (tie-breaker, lower is better)",
             ],
             evidence=[
                 f"Lowest rank disparity (Gini coefficient: "

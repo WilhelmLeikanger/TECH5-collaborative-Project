@@ -15,6 +15,7 @@ import flask
 from app.contract import contract
 from app.contract import mocks
 from app.domain import models
+from app.engine import metrics
 from app.engine import recommendations
 from app.engine import solvers
 from app.persistence import repositories
@@ -1163,6 +1164,41 @@ def compare_solutions() -> Any:
     )
 
 
+# (delta key, label, True if a higher value is better)
+_TRADE_OFF_METRICS = [
+    ("mean_skill_fit_delta", "mean skill fit", True),
+    ("mean_rank_delta", "mean preference rank", False),
+    ("worst_rank_delta", "worst individual rank", False),
+    ("unranked_count_delta", "students outside their preferences", False),
+    ("unmet_soft_requirements_delta", "unmet soft requirements", False),
+]
+
+
+def _choice(rank: int | None) -> str:
+    """Formats a preference rank as e.g. '2nd choice' or 'Not ranked'."""
+    if not rank:
+        return "Not ranked"
+    return f"{rank}{_ORDINAL_SUFFIX.get(rank, 'th')} choice"
+
+
+def _with_trade_offs(cmp: dict[str, Any]) -> dict[str, Any]:
+    """Adds what improves, what gets worse and per-student change labels."""
+    cmp["improves"], cmp["worsens"] = [], []
+    for key, label, higher_is_better in _TRADE_OFF_METRICS:
+        value = cmp["delta_metrics"].get(key) or 0
+        if not value:
+            continue
+        if key == "mean_skill_fit_delta":
+            text = f"{label} {value * 100:+.1f} pp"
+        else:
+            text = f"{label} {value:+g}"
+        better = (value > 0) == higher_is_better
+        cmp["improves" if better else "worsens"].append(text)
+    for c in cmp["changed_assignments"]:
+        c["change"] = f"{_choice(c['rank_a'])} → {_choice(c['rank_b'])}"
+    return cmp
+
+
 @web_bp.get("/recommendations/<run_id>")
 def view_recommendations(run_id: str) -> Any:
     """Displays transparent recommendations with evidence and advice."""
@@ -1172,9 +1208,39 @@ def view_recommendations(run_id: str) -> Any:
         return flask.redirect(flask.url_for("visualization_web.dashboard"))
 
     recs = recommendations.generate_recommendations(run.solutions)
+    if len(run.solutions) == 1:
+        # All three priorities would pick the same solution; show it once.
+        recs = recs[:1]
+
+    # Who is affected: compare every other alternative (before) with the
+    # recommended one (after), so "better off" means better off under it.
+    # Dominated alternatives are skipped; the page warns about them instead.
+    by_id = {s.id: s for s in run.solutions}
+
+    comparisons = {}
+    for rec in recs:
+        recommended = by_id[rec.recommended_solution_id]
+        comparisons[recommended.id] = []
+        for other in run.solutions:
+            if other.id == recommended.id:
+                continue
+            if other.diagnostics.get("dominated_by"):
+                continue
+            cmp = metrics.compare_two_solutions(other, recommended)
+            comparisons[recommended.id].append(_with_trade_offs(cmp))
+
+    summary = collections.Counter(
+        rec.recommended_alternative_number for rec in recs
+    ).most_common()
+    students = {s.id: s for s in repositories.StudentRepository().list_all()}
+    projects = {p.id: p for p in repositories.ProjectRepository().list_all()}
 
     return flask.render_template(
         "recommendations.html",
         run=run,
         recommendations=recs,
+        comparisons=comparisons,
+        summary=summary,
+        students=students,
+        projects=projects,
     )
