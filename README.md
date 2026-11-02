@@ -66,7 +66,7 @@ The project is designed for two collaborating student development teams:
 
 ### Team B: Assignment Engine (`app/engine/`)
 - **Optimization Formulation (`app/engine/solvers.py`)**:
-  - Implement an approved mathematical assignment methodology (e.g., Integer Linear Programming via PuLP/CBC).
+  - Implement an approved mathematical assignment methodology (implemented: Integer Linear Programming in Pyomo, solved with HiGHS).
   - Implement concrete strategies inheriting from `AssignmentStrategy` (`PreferenceOrientedSolver`, `SkillFitOrientedSolver`, `BalancedTradeoffSolver`).
   - Implement generation of distinct Pareto alternatives via no-good integer cuts.
   - Implement `AssignmentEngine.run_assignment(...)` and `AssignmentEngine.execute_run(...)`.
