@@ -9,7 +9,7 @@ In accordance with the updated project specification (Sections 5, 7, 8, and 15),
 1. **Component A (Visualization & Recommendation Component)**:
    - Manages user workflow, cohort data inspection, CRUD interfaces, benchmark scenario seeding, role switching (Admin, Coordinator, Student Viewer), multi-solution visual side-by-side trade-off comparisons, and evidence-backed recommendations.
 2. **Component B (Assignment Engine)**:
-   - Validates input feasibility, executes mathematical Integer Linear Programming (PuLP) using the **Strategy Pattern** (`PreferenceOrientedSolver`, `SkillFitOrientedSolver`, `BalancedTradeoffSolver`), generates distinct Pareto alternatives via integer no-good cuts, evaluates multidimensional quality/fairness metrics, and captures diagnostics.
+   - Validates the input, builds a binary integer linear program in **Pyomo** and solves it with **HiGHS**, using the **Strategy Pattern** (`PreferenceOrientedSolver`, `SkillFitOrientedSolver`, `BalancedTradeoffSolver`) to choose the objective. It generates up to K distinct alternatives with no-good cuts, computes feasibility, efficiency, fairness and capacity indicators, flags dominated alternatives, and saves every run with a status and diagnostics.
 
 The two components are mediated strictly by an **internal Python component contract** (`app/contract/contract.py`), backed by a shared relational SQLite 3NF persistence layer (`app/persistence`).
 
@@ -34,8 +34,8 @@ flowchart TD
     subgraph Component_B["Component B: Assignment Engine (app/engine)"]
         SolverEngine["AssignmentEngine (implements Contract)"]
         StrategyPattern["Strategy Pattern: Preference, Skill-Fit, Balanced"]
-        PuLPSolver["PuLP ILP Solver & Pareto No-Good Cuts"]
-        MetricsEngine["Analytical Indicators & Gini Fairness Engine"]
+        ModelBuilder["AssignmentModel: Pyomo ILP (HiGHS) & No-Good Cuts"]
+        MetricsEngine["metrics: Indicators, Gini, Dominance"]
         ValidationEngine["Domain Feasibility Validator"]
     end
 
@@ -52,7 +52,7 @@ flowchart TD
     ContractABC -.->|Implemented By| SolverEngine
 
     SolverEngine --> StrategyPattern
-    StrategyPattern --> PuLPSolver
+    StrategyPattern --> ModelBuilder
     SolverEngine --> MetricsEngine
     SolverEngine --> ValidationEngine
 
@@ -80,31 +80,128 @@ flowchart TD
 
 ## 4. Object-Oriented Architecture & Design Patterns
 
-### 4.1 Strategy Pattern (Assignment Algorithms)
-The Assignment Engine defines an abstract base strategy `AssignmentStrategy(abc.ABC)` with concrete subclasses:
-- `PreferenceOrientedSolver`: Maximizes student ranked preferences (assigning rank 1 awards highest utility, penalizing unranked assignments).
-- `SkillFitOrientedSolver`: Maximizes qualification fit across all required project skills.
-- `BalancedTradeoffSolver`: Combines normalized preference satisfaction and skill coverage using Pareto scalarization.
+### 4.1 Assignment Engine Classes (Component B)
 
-```
-       +-----------------------------------+
-       |     AssignmentStrategy (ABC)      |
-       +-----------------------------------+
-       | + calculate_cost_or_utility(...)  |
-       | + solve(...)                      |
-       +-----------------------------------+
-             ^               ^          ^
-             |               |          |
-  +----------+----+   +------+----+   +-+----------------+
-  | Preference    |   | SkillFit  |   | BalancedTradeoff |
-  | OrientedSolver|   | Solver    |   | Solver           |
-  +---------------+   +-----------+   +------------------+
+The engine separates **what is allowed** from **what is best**. `AssignmentModel` builds one Pyomo model containing every hard constraint; each `AssignmentStrategy` only sets the objective on that model. `AssignmentEngine` implements the contract and runs the pipeline: validate, solve, compute indicators, save.
+
+```mermaid
+classDiagram
+    direction TB
+
+    class AssignmentEngineContract {
+        <<abstract>>
+        +execute_run(request) AssignmentRun
+        +validate_inputs(request) ValidationOutcome
+        +list_runs(limit) list
+        +get_run(run_id) AssignmentRun
+        +get_solution(solution_id) Solution
+        +compare_solutions(a, b) RunComparison
+    }
+
+    class AssignmentEngine {
+        -run_repo: RunRepository
+        -strategies: dict~str, AssignmentStrategy~
+        +execute_run(request) AssignmentRun
+        +generate_alternatives(students, projects, fixed, strategy, k) AlternativeSet
+        +compare_solutions(a, b) RunComparison
+        -_build_solutions(...) list~Solution~
+        -_finish(run, status, diagnostics) AssignmentRun
+    }
+
+    class AssignmentStrategy {
+        <<abstract>>
+        +name: str
+        +description: str
+        +calculate_cost_or_utility(student, project)* float
+        +solve(students, projects, fixed, excluded) SolveResult
+    }
+    class PreferenceOrientedSolver {
+        max sum(-rank + 0.001 * skill fit)
+    }
+    class SkillFitOrientedSolver {
+        max sum(skill fit + 0.001 * preference score)
+    }
+    class BalancedTradeoffSolver {
+        stage 1: min worst rank
+        stage 2: max 0.5 * preference + 0.5 * skill fit
+        +solve(...) SolveResult
+    }
+
+    class AssignmentModel {
+        +x: Var[s, p] binary
+        +y: Var[p] binary
+        -_add_one_project_per_student()
+        -_add_capacity_bounds()
+        -_add_fixed_assignments(fixed)
+        -_add_mandatory_skills()
+        -_add_no_good_cuts(excluded)
+        +set_objective(weights)
+        +solve() str
+        +chosen_pairs() list
+    }
+
+    class Alternative {
+        +strategy_name: str
+        +solver_status: str
+        +assignments: list~Assignment~
+        +objective_value: float
+        +pairs() list
+    }
+    class AlternativeSet {
+        +status: str
+        +alternatives: list~Alternative~
+        +diagnostics: dict
+    }
+
+    class metrics {
+        <<module>>
+        +compute_solution_indicators(...) dict
+        +calculate_gini(ranks) float
+        +find_dominating_solutions(...) dict
+        +compare_two_solutions(a, b) dict
+    }
+    class validation {
+        <<module>>
+        +validate_cohort(...) ValidationResult
+    }
+    class RunRepository {
+        +save_run(run)
+        +get_run(run_id) AssignmentRun
+    }
+
+    AssignmentEngineContract <|-- AssignmentEngine
+    AssignmentStrategy <|-- PreferenceOrientedSolver
+    AssignmentStrategy <|-- SkillFitOrientedSolver
+    AssignmentStrategy <|-- BalancedTradeoffSolver
+    AssignmentEngine o-- "3" AssignmentStrategy : strategies
+    AssignmentStrategy ..> AssignmentModel : builds and solves
+    AssignmentEngine ..> AlternativeSet : generate_alternatives()
+    AlternativeSet *-- "0..K" Alternative
+    AssignmentEngine ..> validation : before solving
+    AssignmentEngine ..> metrics : after solving
+    AssignmentEngine --> RunRepository : saves every run
 ```
 
-### 4.2 Abstract Contract Pattern (Component Boundary)
+### 4.2 Assignment Engine Design Rationale
+
+| Decision | Reason | Alternative rejected |
+|---|---|---|
+| Constraints in one `AssignmentModel`, objectives in strategies | Every strategy obeys exactly the same hard rules; a new strategy only defines an objective and cannot break feasibility | Each strategy building its own model, which duplicates constraints and lets them drift apart |
+| Strategy Pattern with a strategy registry in `AssignmentEngine` | The user picks a strategy by key; adding one means adding a subclass, not editing the engine | `if/else` on the strategy name inside the engine |
+| `BalancedTradeoffSolver` overrides `solve()` | It needs two solves (minimise the worst rank, then blend preference and skill fit with the worst rank fixed), which a single objective cannot express | One weighted sum with an arbitrary fairness weight |
+| Pyomo with HiGHS (`appsi_highs`) | Same modelling tool as TECH4; HiGHS installs with pip on all platforms and proves infeasibility | PuLP, whose current version no longer bundles a solver |
+| Validation before the solver | Data errors give named messages (`INVALID_INPUT`) instead of a solver failure, and simple impossibilities are reported without solving | Letting the solver discover everything |
+| Four run statuses: `COMPLETED`, `INFEASIBLE`, `INVALID_INPUT`, `FAILED` | Separates "impossible" from "wrong input" from "broken", so the interface can explain each | One generic error status |
+| No-good cuts plus a dominance check | Cuts guarantee distinct alternatives; the check flags an alternative that is not a real trade-off (`dominated_by`) instead of hiding it | Assuming distinct means Pareto-optimal |
+| `metrics` as a module of pure functions | Indicators are calculated the same way for every solution and can be tested with hand-calculated examples | Indicator logic inside the strategies |
+| Every run saved, including rejected and infeasible ones | Component A loads runs from the database, and the history shows why a run failed | Saving only completed runs |
+
+The mathematical formulation behind these classes is in `docs/analytical_note/analytical_note.pdf`.
+
+### 4.3 Abstract Contract Pattern (Component Boundary)
 `AssignmentEngineContract` defines the public interface required by Component A. Concrete `AssignmentEngine` implements all contract methods, ensuring that any mock or alternative solver can be substituted without touching Component A.
 
-### 4.3 Repository Pattern (Data Access Layer)
+### 4.4 Repository Pattern (Data Access Layer)
 Persistence operations are encapsulated into domain repositories:
 - `StudentRepository`: Manages `students`, `student_skills`, and `preferences`.
 - `ProjectRepository`: Manages `projects` and `project_requirements`.
