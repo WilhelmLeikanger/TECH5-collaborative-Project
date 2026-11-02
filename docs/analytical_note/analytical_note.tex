@@ -31,9 +31,9 @@
 TECH5 Programming and Application Design, NHH Norwegian School of Economics\\[8pt]
 \begin{tabular}{ll}
 \textbf{Group:} & 15\\
-\textbf{Team B (Assignment Engine):} & Derek Liang, Aayush M. Kolhe, Ole Theodor [surname]\\
+\textbf{Team B (Engine):} & Derek Liang, Aayush Mohan Kolhe, Ole Theodor Åmlid\\
 \textbf{Team A (Visualization):} & Wilhelm Leikanger, Alexander Bangsund, Henrik Wassiluk\\
-\textbf{Date:} & [submission date]
+\textbf{Date:} & 2 November 2026
 \end{tabular}
 \end{center}
 
@@ -61,22 +61,20 @@ and maximum number of students, desired skills and some mandatory skills; and
 the administration may already have fixed some assignments. The objectives
 conflict: giving many students their first choice can leave a project without
 the skills it needs, and maximising average satisfaction can leave one student
-with a very poor outcome. Rezaeinia, G\'oez and Guajardo~\cite{rezaeinia2022}
-study this setting for an NHH master's programme and show that efficiency and
-fairness have to be treated as separate criteria. Following that insight, our
-system does not hide the conflict behind one score: it produces several
+with a very poor outcome. Efficiency and fairness are therefore separate
+criteria, and our system does not hide the conflict behind one score: it produces several
 feasible alternatives that each favour a different criterion, and it reports
 indicators that make the differences visible.
 
 \subsection{Chosen methodology and justification}
 
-We use binary integer programming, modelled with Pyomo~\cite{pyomo} and solved
-with the HiGHS solver~\cite{highs} (\code{appsi\_highs}), the same tools as in
+We use binary integer programming, modelled with Pyomo and solved
+with the HiGHS solver (\code{appsi\_highs}), the same tools as in
 TECH4. The model is a generalised
-\emph{assignment problem}~\cite[Ch.~9.3]{ior}: every student is assigned to
+\emph{assignment problem}: every student is assigned to
 exactly one project, but a project receives between $l_p$ and $u_p$ students
 instead of exactly one. Additional business rules are added with the standard
-binary-variable techniques for logical relationships~\cite[Ch.~12]{ior}.
+binary-variable techniques for logical relationships.
 
 We chose ILP over the alternatives the brief mentions for four reasons.
 \begin{enumerate}
@@ -86,7 +84,7 @@ We chose ILP over the alternatives the brief mentions for four reasons.
         needs repair steps for minimum capacities and mandatory skills, and
         stable matching loses its guarantees once lower quotas are added.
   \item \textbf{Infeasibility is proven.} When no assignment satisfies the
-        hard constraints, branch-and-bound~\cite[Ch.~12.6]{ior} proves it. A
+        hard constraints, branch-and-bound proves it. A
         heuristic that fails cannot distinguish ``impossible'' from ``not
         found''.
   \item \textbf{Distinct alternatives are exact.} No-good cuts
@@ -185,14 +183,14 @@ in the class \code{AssignmentModel} in \code{app/engine/solvers.py}.
   \item[\eqref{eq:max}--\eqref{eq:runs} Linking $y_p$ to $x_{sp}$.] Together
         these force $y_p = 1$ exactly when project $p$ has at least one
         student. Constraint~\eqref{eq:max} is the big-$M$ linking constraint
-        of the fixed-charge problem~\cite[Ch.~12.3]{ior} with the tightest
+        of the fixed-charge problem with the tightest
         valid $M = u_p$; constraint~\eqref{eq:runs} is a contingent decision
         (``$y_p$ only if some $x_{sp}$'').
   \item[\eqref{eq:fixed} Fixed assignments.] Administrative locks hold in
         every solution and every alternative.
   \item[\eqref{eq:mand} Mandatory skills.] A running project must include
         at least one student who meets each mandatory level. This is a
-        set-covering constraint~\cite[Ch.~12]{ior}: the qualified students
+        set-covering constraint, where the qualified students
         ``cover'' the requirement. Multiplying by $y_p$ means that a project
         with $l_p = 0$ may stay empty instead of requiring an expert. We
         interpret ``mandatory'' at team level (at least one qualified member);
@@ -539,10 +537,17 @@ tells the decision-maker that the priorities do not conflict for this cohort.
         than any ranked project, and are counted in $U$.
   \item \textbf{Ranks are evenly spaced}: the step from first to second
         choice weighs the same as from second to third.
-  \item \textbf{Skill levels} are taken at face value; missing skills count
-        as level 0. A project with no requirements has fit 1.
+  \item \textbf{Skill levels} are whole numbers from 1 to 5, for students
+        and requirements alike; other values are rejected. A skill missing
+        from a profile counts as level 0. A project with no requirements has
+        fit 1.
+  \item \textbf{Preferences}: each student is expected to rank at least
+        three projects, each with a distinct rank. Fewer gives a warning,
+        not an error.
   \item \textbf{Mandatory skills} are met at team level (at least one
-        qualified member), pending the instructor's confirmation.
+        qualified member). This is our documented interpretation of the
+        brief; the stricter reading would set $x_{sp} = 0$ for every
+        unqualified student, a one-line change in the model.
   \item \textbf{Ties} between students with identical preferences are broken
         by the secondary goal ($\varepsilon$ term) and then by the solver; the
         result is a valid optimum, not a judgement about which student
@@ -568,8 +573,12 @@ Empty cohort or catalogue; duplicate or unknown identifiers; invalid
   & Reject & Named validation error; the solver is not run.\\
 Contradictory fixed assignments (one student fixed twice)
   & Reject & Named validation error.\\
-Incomplete, duplicate or tied preferences; no preferences
+Fewer than three ranked projects, or none
   & Warn & Run proceeds; unranked projects cost $m+1$.\\
+Tied ranks (one rank used twice); the same project ranked twice
+  & Reject & \code{INVALID\_INPUT}; the ranking is ambiguous.\\
+Skill or requirement level outside 1--5
+  & Reject & \code{INVALID\_INPUT}, naming the student or project.\\
 Uncatalogued skill in a profile or requirement
   & Warn & Run proceeds; the skill counts only where defined.\\
 Missing skills; project without requirements
@@ -589,7 +598,8 @@ Duplicate alternatives
 Equal aggregate scores
   & Accept & Tie-break term; in recommendations the lowest alternative number wins.\\
 Solver time limit (15\,s) or database failure
-  & Fail & Run status \code{NOT\_SOLVED}/\code{FAILED} with diagnostics.\\
+  & Fail & Run status \code{FAILED}; the solver status (e.g.\
+    \code{NOT\_SOLVED}) is kept in the diagnostics.\\
 \bottomrule
 \end{tabularx}
 \end{table}
@@ -601,7 +611,10 @@ mandatory level is held by no student in the cohort. Validation detects these
 directly. Validation is deliberately conservative: it treats the last case as
 infeasible even when the project has $l_p = 0$ and could stay empty under
 constraint~\eqref{eq:mand}. All other infeasibility, which arises from
-combinations of constraints, is proven by the solver.
+combinations of constraints, is proven by the solver. Data errors are
+reported before infeasibility: an empty cohort, for example, also violates
+$\sum_p l_p \le n$, but the run is \code{INVALID\_INPUT}, because the input
+must be corrected before feasibility means anything.
 
 \section{Limitations}
 
@@ -622,7 +635,7 @@ combinations of constraints, is proven by the solver.
         differences in total skill fit (below $\varepsilon n$), and stage~2 of
         \code{BALANCED} has no tie-break, so the solver chooses between
         equally good assignments. We have not run a sensitivity analysis on
-        these parameters~\cite[Ch.~7]{ior}.
+        these parameters.
   \item \textbf{Alternatives are distinct, not necessarily efficient.} No-good
         cuts guarantee that alternatives differ, not that they are
         Pareto-optimal. Dominated alternatives are flagged
@@ -656,31 +669,5 @@ combinations of constraints, is proven by the solver.
         iterative use the brief describes.
 \end{enumerate}
 
-\begin{thebibliography}{9}
-\bibitem{rezaeinia2022}
-N.~Rezaeinia, J.~C. G\'oez and M.~Guajardo.
-\newblock Efficiency and fairness criteria in the assignment of students to
-  projects.
-\newblock \emph{Annals of Operations Research}, 319(2):1717--1735, 2022.
-\newblock \url{https://doi.org/10.1007/s10479-021-04001-7}
-
-\bibitem{ior}
-F.~S. Hillier and G.~J. Lieberman.
-\newblock \emph{Introduction to Operations Research}.
-\newblock McGraw-Hill. Chapters 7 (sensitivity analysis), 9.3 (the
-  assignment problem) and 12 (integer programming), as covered in TECH4
-  Mathematics for Decisions, NHH, autumn 2025.
-
-\bibitem{pyomo}
-M.~L. Bynum, G.~A. Hackebeil, W.~E. Hart, C.~D. Laird, B.~L. Nicholson,
-  J.~D. Siirola, J.-P. Watson and D.~L. Woodruff.
-\newblock \emph{Pyomo: Optimization Modeling in Python}, 3rd edition.
-\newblock Springer, 2021.
-
-\bibitem{highs}
-Q.~Huangfu and J.~A.~J. Hall.
-\newblock Parallelizing the dual revised simplex method.
-\newblock \emph{Mathematical Programming Computation}, 10(1):119--142, 2018.
-\end{thebibliography}
 
 \end{document}
