@@ -35,7 +35,7 @@ In accordance with Section 8 of the TECH5 Project Specification, the interaction
 |                     COMPONENT B: ASSIGNMENT ENGINE                      |
 |           app/engine/solvers.py: AssignmentEngine                       |
 |   - Strategy Pattern: PREFERENCE, SKILL_FIT, BALANCED                   |
-|   - PuLP Integer Linear Programming & Pareto No-Good Cuts               |
+|   - Pyomo/HiGHS Integer Linear Programming & No-Good Cuts               |
 |   - Analytical Indicators (Gini, Mean Rank, Skill Fit, Utilization)     |
 |                                                                         |
 +-------------------------------------------------------------------------+
@@ -64,7 +64,7 @@ All entities share standardized identifiers across both components:
 | **Project** | `str` (e.g. `"P1"`) | Target semester offering with capacity limits and required/desired skills. |
 | **Skill** | `str` (e.g. `"python"`) | Competency keyword indexed in catalog. |
 | **Run** | `str` (UUIDv4) | Single administrative optimization event. |
-| **Solution** | `str` (UUIDv4) | Individual feasible Pareto allocation alternative produced within a run. |
+| **Solution** | `str` (UUIDv4) | One feasible, distinct allocation alternative produced within a run (dominated alternatives are kept but flagged). |
 | **Fixed Lock** | `(student_id, project_id)` | Administrative lock that must be satisfied in all generated solutions. |
 
 ---
@@ -110,6 +110,8 @@ class RunStatus(enum.Enum):
     WARNING = "WARNING"
     FAILED = "FAILED"
 ```
+
+`WARNING` is part of the enum but is **not returned by the engine**. Non-fatal issues are reported in `run.diagnostics["warnings"]` of a `COMPLETED` run instead, so that a run that was solved is always `COMPLETED`. Section 5 defines when each status is used.
 
 ### 3.4 `RunComparison`
 The side-by-side comparison structure returned by `compare_solutions`:
@@ -171,7 +173,57 @@ class AssignmentEngineContract(abc.ABC):
 
 ---
 
-## 5. Persistence Responsibilities
+## 5. Engine Behaviour (Component B Guarantees)
+
+This section states what `AssignmentEngine` (`app/engine/solvers.py`) promises for each contract operation. The exact fields and keys that Component A reads are listed in [`engine_integration_checklist.md`](engine_integration_checklist.md); the engine satisfies that checklist.
+
+### 5.1 Operations
+
+| Operation | Behaviour | Errors |
+|---|---|---|
+| `validate_inputs(request)` | Runs `validation.validate_cohort` only; never calls the solver and writes nothing to the database. | None; problems are returned in the `ValidationOutcome`. |
+| `execute_run(request)` | Validates, solves, computes indicators and **saves the run in every outcome**, then returns it with one of the four statuses below. | Never raises for bad data, infeasibility or solver failure; these become run statuses. |
+| `list_runs(limit)` | Most recent runs first, at most `limit`. | None. |
+| `get_run(run_id)` / `get_solution(solution_id)` | Loads from the database, including assignments and indicators. | Returns `None` if the id is unknown. |
+| `compare_solutions(a_id, b_id)` | Compares two saved solutions with `metrics.compare_two_solutions`; `a` is the baseline. | Raises `KeyError` if either solution is not found. |
+
+### 5.2 Steps of `execute_run`
+
+1. **Validate.** Data errors (empty cohort, unknown ids, tied ranks, skill levels outside 1 to 5, invalid capacities, ...) give `INVALID_INPUT`. Data errors are reported before infeasibility.
+2. **Check simple impossibilities.** Total capacity below the cohort size, minimum capacities above it, more fixed students than seats, or a mandatory skill no student has give `INFEASIBLE` without solving.
+3. **Synchronise entities.** Students, projects and fixed assignments in the request are written to their tables so that saved assignments keep foreign-key integrity.
+4. **Generate alternatives.** Alternative 1 uses `request.strategy_key`; the next ones use the remaining strategies (`PREFERENCE`, `SKILL_FIT`, `BALANCED`). No-good cuts exclude every earlier solution, so alternatives are always distinct. Generation stops at `max_alternatives` or when no further distinct solution exists.
+5. **Evaluate.** Each solution gets feasibility, efficiency, fairness and capacity indicators. A solution that is no better on mean rank and mean skill fit than another, and worse on one, gets `diagnostics["dominated_by"]` and a warning.
+6. **Save** the run and return it.
+
+### 5.3 Run statuses
+
+| Status | When | `solutions` | Diagnostics always present |
+|---|---|---|---|
+| `COMPLETED` | At least one feasible alternative was found | 1 to `max_alternatives` | `message`, `solver_status`, `requested_alternatives`, `distinct_alternatives`, `strategy_order`, `stop_reason`, `solution_count`, `warnings` |
+| `INFEASIBLE` | Validation or the solver proved that no assignment satisfies the hard constraints | Empty | `message`, `reasons` (plus `solver_status` when the solver proved it) |
+| `INVALID_INPUT` | The input data has errors, or the strategy key is unknown | Empty | `message`, `errors` |
+| `FAILED` | The solver stopped without a solution (e.g. the 15-second time limit) or the database failed | Empty | `message` |
+
+All statuses also carry `warnings` (list) and `notes` (str) in `run.diagnostics`, and `run.configuration` holds `primary_strategy`, `max_alternatives`, `engine` and `notes`.
+
+### 5.4 Solution output
+
+| Field | Content |
+|---|---|
+| `strategy_name` | `PREFERENCE`, `SKILL_FIT` or `BALANCED` |
+| `alternative_number` | 1, 2, 3 in the order generated |
+| `assignments` | One per student, with `preference_rank` (`None` if unranked) and `skill_fit_score` |
+| `objective_value` | Objective under the solution's own strategy (not comparable across strategies) |
+| `indicators` | `feasibility`, `efficiency`, `fairness`, `capacity`; key list in the integration checklist, formulas in the analytical note |
+| `diagnostics` | `strategy`, `solver`, `solver_status`, `solve_time_seconds`, `variables_count`, `constraints_count`; `dominated_by` (list of alternative numbers) when dominated |
+| `warnings` | e.g. "Dominated by alternatives 1 and 2" |
+
+`DiagnosticInfo` in `contract.py` is not used by the engine; diagnostics are plain dictionaries so that they can be stored as JSON and shown directly in the interface.
+
+---
+
+## 6. Persistence Responsibilities
 
 1. **Relational Database Ownership**:
    - `RunRepository` is encapsulated within Component B for storing `AssignmentRun`, `Solution`, and `Assignment` records.
@@ -182,7 +234,7 @@ class AssignmentEngineContract(abc.ABC):
 
 ---
 
-## 6. Integration Usage Example
+## 7. Integration Usage Example
 
 ```python
 from app.contract import contract
@@ -211,7 +263,7 @@ else:
     run = engine.execute_run(request)
     print(f"Run {run.id} status: {run.status}, Generated {len(run.solutions)} solutions.")
 
-    # 5. Compare two Pareto alternatives
+    # 5. Compare two alternatives
     if len(run.solutions) >= 2:
         comparison = engine.compare_solutions(run.solutions[0].id, run.solutions[1].id)
         print(f"Shifted students: {comparison.changed_students_count}")
