@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- macOS launchd agent: runs the bot every day at 20:50 (local time) for one release.
+     Install:  cp deploy/com.te-bot.plist ~/Library/LaunchAgents/
+               sed -i '' "s#REPLACE_ME#$HOME/TECH5-collaborative-Project/timeedit_bot#g" ~/Library/LaunchAgents/com.te-bot.plist
+               launchctl load ~/Library/LaunchAgents/com.te-bot.plist
+     Remove:   launchctl unload ~/Library/LaunchAgents/com.te-bot.plist
+     Note: the Mac must be awake at 20:50 (System Settings → Energy, or `caffeinate`). -->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.te-bot</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>REPLACE_ME/.venv/bin/python</string>
+        <string>-m</string>
+        <string>te_bot</string>
+        <string>run</string>
+        <string>--once</string>
+        <string>--no-interactive</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>REPLACE_ME</string>
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>20</integer>
+        <key>Minute</key>
+        <integer>50</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/tmp/te-bot.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/te-bot.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin</string>
+        <!-- For unattended Feide login (with [auth] method = "feide"):
+        <key>FEIDE_USERNAME</key><string>your-feide-username</string>
+        <key>FEIDE_PASSWORD</key><string>your-password</string>  -->
+    </dict>
+</dict>
+</plist>

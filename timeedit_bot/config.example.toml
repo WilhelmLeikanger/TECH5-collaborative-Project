@@ -1,0 +1,52 @@
+# te_bot configuration — copy to ~/.timeedit-bot/config.toml (python -m te_bot init does this)
+# Every key is optional; the defaults target NHH's group-room page.
+
+[timeedit]
+base_url     = "https://cloud.timeedit.net/nhh/web/schedule"
+reserve_page = "ri1Q56.html"   # the booking page; ri1Q56 decodes to ri.html?h=t&sid=12
+sid          = 12
+locale       = "en_GB"         # TimeEdit 'l' parameter ("" to omit)
+timezone     = "Europe/Oslo"
+# room_type  = 186             # object-type id of rooms; left unset → discovered automatically
+room_name_regex = "^Grupperom\\b"
+
+[release]
+time           = "21:00"   # local time when a new day opens (server time)
+days_ahead     = 14        # the day that opens = today + days_ahead
+lead_ms        = 40        # fire this many ms before the (clock-synced) release instant
+fast_retry_ms  = 150       # retry interval while the server says "not open yet"
+burst_seconds  = 45        # keep the fast retry pace this long
+slow_retry_s   = 2.0       # then this interval ...
+max_wait_seconds = 600     # ... until giving up
+prepare_minutes = 10       # session check / discovery / planning starts this early
+clock_sync     = true
+min_request_gap_ms = 100   # hard floor on request pacing (be polite)
+
+[strategy]
+# Rooms in priority order. Short forms work too ("U28" matches "Grupperom U28").
+rooms = ["Grupperom U28", "Grupperom U30", "Grupperom U29", "Grupperom U31", "Grupperom U32", "Grupperom U20"]
+# Never book these (NHH's U21–U27 are master-thesis rooms and usually blocked anyway).
+exclude_rooms = ["Grupperom U21", "Grupperom U22", "Grupperom U23", "Grupperom U24", "Grupperom U25", "Grupperom U26", "Grupperom U27"]
+any_room_fallback = true   # after the list, try every other room matching room_name_regex
+# Time windows in priority order; the bot tries the longest block (max_hours) that fits,
+# in each window, in order, then shorter blocks if fallback_shorter is true.
+windows = ["08:00-12:00", "12:00-16:00", "09:00-13:00", "13:00-17:00", "10:00-14:00"]
+max_hours = 4              # NHH rule: max 4 hours per reservation
+min_hours = 1
+duration_step_hours = 1
+fallback_shorter = true
+order = "room-first"       # "room-first": all windows for room 1, then room 2 ...  "window-first": the opposite
+# NHH rule: max 4 reservations per week → pick the 4 days you care about most.
+weekdays = ["mon", "tue", "wed", "thu"]
+weekly_quota = 4
+blocks_per_day = 1         # 2 = also try a second block (uses 2 of the 4 weekly slots)
+# Extra free-text fields the reservation form may have, e.g. fields = { fe2 = "Group work" }
+fields = {}
+
+[auth]
+method = "browser"         # "browser": log in by hand once in a window; "feide": automated with env credentials
+username_env = "FEIDE_USERNAME"
+password_env = "FEIDE_PASSWORD"
+feide_org = "NHH"
+headless = true
+max_session_age_hours = 20

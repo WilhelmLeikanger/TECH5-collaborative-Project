@@ -1,0 +1,11 @@
+# Fires the service every evening 10 minutes before the 21:00 release (Europe/Oslo).
+[Unit]
+Description=Start the TimeEdit room sniper before the 21:00 release
+
+[Timer]
+OnCalendar=*-*-* 20:50:00 Europe/Oslo
+AccuracySec=1s
+Persistent=false
+
+[Install]
+WantedBy=timers.target

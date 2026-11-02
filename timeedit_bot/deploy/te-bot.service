@@ -1,0 +1,20 @@
+# systemd user service — runs one release (20:50 preparation → 21:00 booking) and exits.
+# Install:  mkdir -p ~/.config/systemd/user && cp deploy/te-bot.* ~/.config/systemd/user/
+#           systemctl --user daemon-reload && systemctl --user enable --now te-bot.timer
+#           loginctl enable-linger $USER      # keep user services running when logged out
+# Logs:     journalctl --user -u te-bot -f    (also ~/.timeedit-bot/logs/te_bot.log)
+[Unit]
+Description=TimeEdit room sniper (one release)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Adjust the paths to your checkout / virtualenv.
+WorkingDirectory=%h/TECH5-collaborative-Project/timeedit_bot
+ExecStart=%h/TECH5-collaborative-Project/timeedit_bot/.venv/bin/python -m te_bot run --once --no-interactive
+# For unattended Feide login put the credentials in a root-only file:
+#   EnvironmentFile=%h/.timeedit-bot/credentials.env   (FEIDE_USERNAME=... / FEIDE_PASSWORD=...)
+# and set  [auth] method = "feide"  in config.toml.
+TimeoutStartSec=30min
+Nice=-5
